@@ -1,0 +1,11 @@
+name: thermodrift
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytest
+  - ruff
+  - pip
+  - pip:
+    - pdoc
+    - "-e ."
