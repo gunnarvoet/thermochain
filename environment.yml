@@ -5,7 +5,7 @@ dependencies:
   - python=3.11
   - pytest
   - ruff
+  - pdoc
   - pip
   - pip:
-    - pdoc
     - "-e ."
