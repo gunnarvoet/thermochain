@@ -57,6 +57,10 @@ def load_config_box(configfile) -> Box:
     # cfg.path.data = cfg.path.root.joinpath(cfg.path.data)
     # cfg.path.fig = cfg.path.root.joinpath(cfg.path.fig)
 
+    # parse datetimes
+    for time in ["start_time", "end_time"]:
+        cfg[time] = np.datetime64(cfg[time])
+
     return cfg
 
 
