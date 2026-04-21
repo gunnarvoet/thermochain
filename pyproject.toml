@@ -34,6 +34,7 @@ dependencies = [
     "mixsea",
     "sbemoored",
     "rbrmoored",
+    "gvpy",
     "odfpy>=1.4.1",
 ]
 
@@ -66,6 +67,7 @@ package-type = "library"
 [tool.uv.sources]
 sbemoored = { path = "../sbemoored", editable = true }
 rbrmoored = { path = "../rbrmoored", editable = true }
+gvpy = { path = "../gvpy", editable = true }
 # mixsea = { path = "../mixsea", editable = true }
 mixsea = { git = "https://github.com/modscripps/mixsea", branch = "main" }
 
