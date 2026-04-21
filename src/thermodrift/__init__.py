@@ -46,5 +46,5 @@ __author__ = """Gunnar Voet"""
 __email__ = "gvoet@ucsd.edu"
 __version__ = "2023.12.0"
 
-__all__ = ["io"]
-from . import io
+__all__ = ["io", "plot"]
+from . import io, plot
