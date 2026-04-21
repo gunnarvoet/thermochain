@@ -27,7 +27,7 @@ help:
 	@python -c "$$PRINT_HELP_PYSCRIPT" < $(MAKEFILE_LIST)
 
 lint: ## check style with flake8
-	ruff check thermodrift
+	ruff check src/thermodrift
 
 test: ## run tests
 	pytest

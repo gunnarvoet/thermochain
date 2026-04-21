@@ -1,10 +1,10 @@
 [build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
+requires = ["uv_build>=0.8.19,<0.9.0"]
+build-backend = "uv_build"
 
 [project]
 name = "thermodrift"
-version = "2023.12.0"
+version = "2026.02.0"
 authors = [
     {name = "Gunnar Voet", email = 'gvoet@ucsd.edu'},
 ]
@@ -22,15 +22,19 @@ classifiers = [
     ]
 requires-python = ">=3.11"
 dependencies = [
+    "pandas",
     "numpy>=1.26.2",
     "xarray>=2023.12.0",
     "matplotlib>=3.8.2",
     "gsw>=3.6.17",
-    "rbrmoored @ file:///Users/gunnar/Projects/python/rbrmoored",
-    "sbemoored @ file:///Users/gunnar/Projects/python/sbemoored",
     "pyyaml>=6.0.1",
     "python-box>=7.1.1",
     "openpyxl>=3.1.2",
+    "tqdm",
+    "mixsea",
+    "sbemoored",
+    "rbrmoored",
+    "odfpy>=1.4.1",
 ]
 
 [project.urls]
@@ -45,8 +49,8 @@ Changelog = "https://github.com/gunnarvoet/thermodrift/blob/main/HISTORY.md"
 # options are explained here:
 # https://learn.scientific-python.org/development/guides/pytest/
 # minversion = "6.0"
-addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config", "--import-mode=importlib"]
-xfail_strict = true
+# addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+# xfail_strict = true
 # filterwarnings = ["error"]
 # log_cli_level = "info"
 testpaths = ["tests"]
@@ -58,3 +62,16 @@ filterwarnings = [
 
 [tool.pdm]
 package-type = "library"
+
+[tool.uv.sources]
+sbemoored = { path = "../sbemoored", editable = true }
+rbrmoored = { path = "../rbrmoored", editable = true }
+# mixsea = { path = "../mixsea", editable = true }
+mixsea = { git = "https://github.com/modscripps/mixsea", branch = "main" }
+
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.1",
+]
