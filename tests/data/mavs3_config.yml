@@ -1,8 +1,8 @@
-info: test config file
+info: MAVS3 thermistor processing configuration file
 
 meta:
   mooring_name: mavs3
-  project: SomeProject
+  project: BLT
   PI: Gunnar Voet
   email: gvoet@ucsd.edu
 
@@ -10,11 +10,11 @@ path:
   fig: fig/mavs3/
   data:
     raw:
-      rbr: data/raw/rbrsolo/
-      sbe: data/raw/sbe56/
+      rbr: data/raw/rbrsolo/BLT2/
+      sbe: data/raw/sbe56/BLT2/
     proc: data/proc/mavs3/
-  sensors: data/sensor_sheet.xlsx
-  mooring: data/mooring_sheet.csv
+  sensors: data/aux/blt2.xlsx
+  mooring: data/aux/blt_mavs3.csv
 
 start_time: 2021-10-22 20:30:00
 end_time: 2022-08-04 13:45:00

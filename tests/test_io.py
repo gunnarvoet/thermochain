@@ -18,7 +18,7 @@ def test_read_config_file():
 def test_read_config_file_with_fixture(config_file_path):
     # note: config_file_path has been defined as fixture in conftest.py
     cfg = thermodrift.io.load_config(config_file_path)
-    assert cfg["info"] == "config-file"
+    assert cfg["info"] == "test config file"
 
 
 def test_read_sensor_config_csv(rootdir):
@@ -51,12 +51,11 @@ def test_sensor_sheet_load(input, expected, rootdir):
     assert df.loc[72219].type == "rbr"
 
 
-@pytest.mark.xfail(raises=ValueError)
 def test_read_sensor_config_csv_fail(rootdir):
-    # note: rootdir has been defined as fixture in conftest.py
     sensor_sheet = rootdir.joinpath("data/sensor_sheet_fail.csv")
     assert sensor_sheet.exists()
-    df = thermodrift.io.sensor_sheet_load(sensor_sheet)
+    with pytest.raises(ValueError):
+        df = thermodrift.io.sensor_sheet_load(sensor_sheet)
 
 
 def test_mooring_sheet_load(rootdir):
@@ -64,3 +63,14 @@ def test_mooring_sheet_load(rootdir):
     assert mooring_sheet.exists()
     mooring_info = thermodrift.io.mooring_sheet_load(mooring_sheet)
     assert mooring_info.loc[72213].height == 6.4
+
+
+def test_proc_db(rootdir):
+    sensor_sheet = rootdir.joinpath("data/sensor_sheet.xlsx")
+    df = thermodrift.io.sensor_sheet_load(sensor_sheet)
+    proc_db = thermodrift.io.proc_db_generate(df)
+
+
+def test_generate_processing_object(config_file_path):
+    M = thermodrift.io.ProcessThermistorMooring(config_file_path)
+    assert M.sensor_info.loc[376].type == "sbe"
