@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from thermodrift.io import calculate_r2, exp_function, expfit_ufunc
+from thermodrift.io import calculate_r2, exp_function, expfit_ufunc, linfit_ufunc
 
 from _synthetic import cvhg16_eq5, noisy_drift
 
@@ -165,3 +165,35 @@ class TestExpfitUfuncRecovery:
         )
         assert out.shape == da.shape
         assert not np.all(np.isnan(out.values))
+
+
+class TestLinfitUfunc:
+    """Protection tests — pre- and post-consolidation.
+
+    Pins the current behaviour that the fit is evaluated at every index
+    of the input (no NaN gaps). This is the property the refactor should
+    preserve when collapsing ``linfit`` / ``linfit_ufunc``.
+    """
+
+    def test_perfect_linear_recovered(self):
+        n = 50
+        x = 0.5 + 0.01 * np.arange(n)
+        fit = linfit_ufunc(x)
+        np.testing.assert_allclose(fit, x, atol=1e-12)
+
+    def test_preserves_length(self):
+        x = np.arange(25, dtype=float)
+        fit = linfit_ufunc(x)
+        assert fit.shape == x.shape
+
+    def test_handles_internal_nans(self):
+        # Input is exactly linear with a few NaN gaps; the fit of the
+        # remaining points recovers the same line, and linfit_ufunc
+        # evaluates that line at every index → output matches input
+        # at non-NaN positions to within numerical precision.
+        x = 0.5 + 0.01 * np.arange(30)
+        x[5:8] = np.nan
+        fit = linfit_ufunc(x)
+        assert fit.shape == x.shape
+        good = ~np.isnan(x)
+        np.testing.assert_allclose(fit[good], x[good], atol=1e-12)
