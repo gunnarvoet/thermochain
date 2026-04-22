@@ -1787,39 +1787,6 @@ def linfit_ufunc(ti, n_output=None):
     return p(n)
 
 
-def linfit(ti, n_output=None):
-    """Linearly fit time series.
-
-    The time series may have NaNs. The returned time series containing the linear fit has the same length as the original time series and keeps the NaNs in place.
-
-    Parameters
-    ----------
-    ti :
-
-
-    Returns
-    -------
-
-
-    """
-    ti_orig = ti.copy()
-    ti = ti.squeeze()
-    if type(ti) == xr.DataArray:
-        ti = ti.data
-    n = np.arange(len(ti))
-    good = ~np.isnan(ti)
-    tig = ti[good]
-    n = n[good]
-    fit = np.polyfit(n, tig, 1)
-    p = np.poly1d(fit)
-    if n_output is not None:
-        return p(n_output)
-    else:
-        out = ti_orig
-        out[good] = p(n)
-        return out
-
-
 def exp_function(t, t0, m, A, beta, tau):
     gamma = scipy.special.gamma(1 / beta) * scipy.special.gammainc(1 / beta, t / tau)
     out = t0 + m * t + A * gamma
@@ -1872,48 +1839,6 @@ def expfit_ufunc(x):
 
     expfit = exp_function1(n, *popt)
     return expfit
-
-
-def exp_fit(x, n_output=None):
-    # need the results of a linear fit first
-    if type(x) == xr.DataArray:
-        x = x.data
-    n = np.arange(len(x))
-    good = ~np.isnan(x)
-    xg = x[good]
-    n = n[good]
-    res = scipy.stats.linregress(n, xg)
-    # [m, t0], res, rank, sv, rcond = np.polyfit(n, x, 1, full=True)
-    m = res.slope
-    if np.absolute(m) > 1e-4:
-        print(f"large m (linear slope): {m}")
-        m = 1e-4 * np.sign(m)
-    t0 = res.intercept
-    # print(f"threshold for exponential fit: {nonlinear_condition:.6f}")
-    # now feed the parameters into the function fit as initial parameters
-    # we also provide bounds for the fit parameters
-    (
-        popt,
-        pcov,
-    ) = scipy.optimize.curve_fit(
-        exp_function1,
-        n,
-        xg,
-        p0=[t0, m, 0.005 * m * (1.5**15), 1],
-        bounds=(
-            [-0.2, -1e-4, -0.005 * np.abs(m) * (1.5**40), 1 / 2],
-            [0.2, 1e-4, 0.005 * np.abs(m) * (1.5**40), 2],
-        ),
-        maxfev=2000,
-    )
-    if n_output is not None:
-        expfit = exp_function1(n_output, *popt)
-        return expfit
-    else:
-        expfit = exp_function1(n, *popt)
-        out = x.copy()
-        out[good] = expfit
-        return out
 
 
 def lin_or_exp(x, xlin, xexp, return_type=False):
