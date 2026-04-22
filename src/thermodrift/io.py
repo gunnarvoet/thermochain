@@ -1563,16 +1563,6 @@ class sensor_drift:
             output_core_dims=[["window"]],
             vectorize=True,
         )
-        # Also run the fit and evaluate it for more windows.
-        # Doesn't work with split/map/combine as the output is different length.
-        # We create dicts with sn as key instead.
-        n_output = len(self.time_window)
-        self.linfit_long = {}
-        self.expfit_long = {}
-        for sn, data in self.offsets_clean.groupby("sn"):
-            self.linfit_long[sn] = linfit(np.squeeze(data.data), np.arange(n_output))
-            self.expfit_long[sn] = exp_fit(np.squeeze(data.data), np.arange(n_output))
-
         # Determine which fit to use
         # fit = []
         # for (g0, x), (g1, lin), (g2, exp) in zip(
@@ -1593,30 +1583,6 @@ class sensor_drift:
         # ):
         #     fit_type[sn] = lin_or_exp(x, lin, exp, return_type=True)
         # self.fit_type = fit_type
-
-    def drift_to_dataarray_old(self):
-        out = self.offsets_initial.copy()
-        out.name = f"{self.mooring_name} sensor drift"
-        out.coords["time"] = (["window"], np.array(self.time_window))
-
-        def get_fit_data(da, lin_fit, exp_fit, fit_type):
-            sn = da.sn.data
-            typ = fit_type[int(sn)]
-            if typ == "lin":
-                fit = lin_fit[int(sn)]
-            elif typ == "exp":
-                fit = exp_fit[int(sn)]
-            out = da.copy()
-            out.data = fit
-            return out.squeeze()
-
-        out = out.groupby("depth").map(
-            get_fit_data,
-            lin_fit=self.linfit_long,
-            exp_fit=self.expfit_long,
-            fit_type=self.fit_type,
-        )
-        self.drift = out
 
     def drift_to_dataarray(self):
         """Note: the old version of this function lets you evaluate the fits to
