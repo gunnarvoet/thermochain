@@ -6,6 +6,7 @@ I/O functions.
 Generate a processing object with `ProcessThermistorMooring`.
 """
 
+import functools
 from pathlib import Path
 import tqdm
 import yaml
@@ -1236,6 +1237,10 @@ class sensor_drift:
             use_spline=False,
             spline_smooth=2e-4,
             exclude_sn=None,
+            tau0=20.0,
+            tau_bounds=(5.0, 180.0),
+            beta_bounds=(1.0 / 3.0, 3.0),
+            fit_mode="auto",
         )
         for key, value in drift_defaults.items():
             setattr(self, key, value)
@@ -1243,6 +1248,10 @@ class sensor_drift:
             assert type(drift_parameters) == dict
             for key, value in drift_parameters.items():
                 setattr(self, key, value)
+        if self.fit_mode not in ("linear", "auto", "exp"):
+            raise ValueError(
+                f"fit_mode must be 'linear', 'auto', or 'exp'; got {self.fit_mode!r}"
+            )
 
     def print_drift_parameters(self):
         parameter_list = [
@@ -1255,6 +1264,10 @@ class sensor_drift:
             "use_spline",
             "spline_smooth",
             "exclude_sn",
+            "fit_mode",
+            "tau0",
+            "tau_bounds",
+            "beta_bounds",
         ]
         for key in parameter_list:
             print(key, ":", getattr(self, key))
@@ -1393,44 +1406,38 @@ class sensor_drift:
         self.offsets_second_guess = self.offsets - self.first_guess_shared_fluct_comp
 
     def fit_second_guess(self):
-        # Fit the second guess, both linearly or with the exponential function,
-        # for each of the three.
+        # Linear fit is always computed — cheap and needed as fallback.
         self.second_guess_linfit = xr.apply_ufunc(
             linfit_ufunc,
-            self.offsets_second_guess,
-            input_core_dims=[["window"]],  # Tells Xarray 'window' is dim to operate on
-            output_core_dims=[["window"]],
-            vectorize=True,  # Automatically loops over other dims
-        )
-        # self.second_guess_linfit = self.offsets_second_guess.groupby("depth").map(
-        #     linfit
-        # )
-        self.second_guess_expfit = xr.apply_ufunc(
-            expfit_ufunc,
             self.offsets_second_guess,
             input_core_dims=[["window"]],
             output_core_dims=[["window"]],
             vectorize=True,
         )
-        # self.second_guess_expfit = self.offsets_second_guess.groupby("depth").map(
-        #     exp_fit
-        # )
 
-        # Determine which fit to use
-        # fit = []
-        # for (g0, x), (g1, lin), (g2, exp) in zip(
-        #     self.offsets_second_guess.groupby("depth"),
-        #     self.second_guess_linfit.groupby("depth"),
-        #     self.second_guess_expfit.groupby("depth"),
-        # ):
-        #     fit.append(lin_or_exp(x, lin, exp))
-        # self.fit = xr.concat(fit, dim="depth")
-
-        # Actually, for now we will just the linear ones.
-        # Uncomment lines above if you want to determine whether to use
-        # exponential or linear fit based on regression.
-        self.fit = self.second_guess_linfit
-
+        if self.fit_mode == "linear":
+            self.fit = self.second_guess_linfit
+        else:
+            self.second_guess_expfit = xr.apply_ufunc(
+                functools.partial(
+                    expfit_ufunc,
+                    tau0=self.tau0,
+                    tau_bounds=self.tau_bounds,
+                    beta_bounds=self.beta_bounds,
+                ),
+                self.offsets_second_guess,
+                input_core_dims=[["window"]],
+                output_core_dims=[["window"]],
+                vectorize=True,
+            )
+            if self.fit_mode == "exp":
+                self.fit = self.second_guess_expfit
+            else:  # "auto"
+                self.fit, self.second_guess_fit_type = self._select_fit_per_sensor(
+                    self.offsets_second_guess,
+                    self.second_guess_linfit,
+                    self.second_guess_expfit,
+                )
 
         # Now detrend the initial drift guess with the fit:
         self.offsets_detrended = self.offsets.copy() - self.fit
@@ -1456,43 +1463,76 @@ class sensor_drift:
         self.offsets_clean = self.offsets - self.second_guess_shared_fluct_comp
 
     def fit_cleaned_offsets(self):
-        # Fit the clean offset time series. This will be final sensor drift.
-        # self.drift_linfit = self.offsets_clean.groupby("depth").map(linfit)
+        # Fit the clean offset time series. This is the final sensor drift.
         self.drift_linfit = xr.apply_ufunc(
             linfit_ufunc,
-            self.offsets_clean,
-            input_core_dims=[["window"]],  # Tells Xarray 'window' is dim to operate on
-            output_core_dims=[["window"]],
-            vectorize=True,  # Automatically loops over other dims
-        )
-        # self.drift_expfit = self.offsets_clean.groupby("depth").map(exp_fit)
-        self.drift_expfit = xr.apply_ufunc(
-            expfit_ufunc,
             self.offsets_clean,
             input_core_dims=[["window"]],
             output_core_dims=[["window"]],
             vectorize=True,
         )
-        # Determine which fit to use
-        # fit = []
-        # for (g0, x), (g1, lin), (g2, exp) in zip(
-        #     self.offsets_second_guess.groupby("depth"),
-        #     self.second_guess_linfit.groupby("depth"),
-        #     self.second_guess_expfit.groupby("depth"),
-        # ):
-        #     fit.append(lin_or_exp(x, lin, exp))
-        # self.drift_fit = xr.concat(fit, dim="depth")
-        # Just use linear fit for now
-        self.drift_fit = self.drift_linfit
 
-        # fit_type = {}
-        # for (sn, x), (sn1, lin), (sn2, exp) in zip(
-        #     self.offsets_second_guess.groupby("sn"),
-        #     self.second_guess_linfit.groupby("sn"),
-        #     self.second_guess_expfit.groupby("sn"),
-        # ):
-        #     fit_type[sn] = lin_or_exp(x, lin, exp, return_type=True)
-        # self.fit_type = fit_type
+        if self.fit_mode == "linear":
+            self.drift_fit = self.drift_linfit
+            self.fit_type = xr.DataArray(
+                np.array(["lin"] * self.drift_linfit.sizes["depth"]),
+                dims=("depth",),
+                coords=self._sensor_axis_coords(self.drift_linfit),
+            )
+        else:
+            self.drift_expfit = xr.apply_ufunc(
+                functools.partial(
+                    expfit_ufunc,
+                    tau0=self.tau0,
+                    tau_bounds=self.tau_bounds,
+                    beta_bounds=self.beta_bounds,
+                ),
+                self.offsets_clean,
+                input_core_dims=[["window"]],
+                output_core_dims=[["window"]],
+                vectorize=True,
+            )
+            if self.fit_mode == "exp":
+                self.drift_fit = self.drift_expfit
+                self.fit_type = xr.DataArray(
+                    np.array(["exp"] * self.drift_expfit.sizes["depth"]),
+                    dims=("depth",),
+                    coords=self._sensor_axis_coords(self.drift_expfit),
+                )
+            else:  # "auto"
+                self.drift_fit, self.fit_type = self._select_fit_per_sensor(
+                    self.offsets_clean,
+                    self.drift_linfit,
+                    self.drift_expfit,
+                )
+
+    @staticmethod
+    def _sensor_axis_coords(da):
+        return {c: da.coords[c] for c in ("depth", "sn") if c in da.coords}
+
+    def _select_fit_per_sensor(self, offsets, linfit, expfit):
+        """Pick linfit or expfit per sensor using the CvHG16 R² criterion.
+
+        Returns (fit DataArray with the same dims as ``linfit`` /
+        ``expfit``, fit_type DataArray along the sensor axis).
+        """
+        types = []
+        for di in range(offsets.sizes["depth"]):
+            types.append(
+                lin_or_exp(
+                    offsets.isel(depth=di),
+                    linfit.isel(depth=di),
+                    expfit.isel(depth=di),
+                    return_type=True,
+                )
+            )
+        fit_type = xr.DataArray(
+            np.array(types),
+            dims=("depth",),
+            coords=self._sensor_axis_coords(linfit),
+        )
+        fit = xr.where(fit_type == "exp", expfit, linfit)
+        return fit, fit_type
 
     def drift_to_dataarray(self):
         """Note: the old version of this function lets you evaluate the fits to
