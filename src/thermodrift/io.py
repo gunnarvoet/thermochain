@@ -1718,39 +1718,68 @@ def calculate_r2(x, xfit):
     return 1 - SSres / SStot
 
 
-def expfit_ufunc(x):
-    # need the results of a linear fit first
+def expfit_ufunc(
+    x,
+    tau0=20.0,
+    tau_bounds=(5.0, 180.0),
+    beta_bounds=(1.0 / 3.0, 3.0),
+    A_scan_factor=1.5,
+    A_scan_iters=40,
+):
+    """Fit CvHG16 Eq. 5 to a 1-d offset series.
+
+    Implements the paper's algorithm (JTECH-D-15-0243.1 §4a): seed from a
+    linear regression, then run Nelder-Mead-style bounded least-squares
+    with β seeds {0.5, 2.0}, scanning the relaxation amplitude A by a
+    factor of ``A_scan_factor`` for up to ``A_scan_iters`` steps. The
+    returned fit is the best-R² candidate evaluated at every index of
+    ``x`` (including indices where ``x`` is NaN). Returns all-NaN if the
+    series has fewer than 5 finite points or every attempt raised.
+
+    ``tau0`` / ``tau_bounds`` are the main knobs for RBR/SBE vs. NIOZ
+    instruments — NIOZ needs τ₀ ≈ 2 d, RBR/SBE ≈ 20 d.
+    """
     n = np.arange(len(x))
     good = ~np.isnan(x)
     xg = x[good]
     ng = n[good]
-    res = scipy.stats.linregress(ng, xg)
-    # [m, t0], res, rank, sv, rcond = np.polyfit(n, x, 1, full=True)
-    m = res.slope
-    if np.absolute(m) > 1e-4:
-        print(f"large m (linear slope): {m}")
-        m = 1e-4 * np.sign(m)
-    t0 = res.intercept
-    # print(f"threshold for exponential fit: {nonlinear_condition:.6f}")
-    # now feed the parameters into the function fit as initial parameters
-    # we also provide bounds for the fit parameters
-    (
-        popt,
-        pcov,
-    ) = scipy.optimize.curve_fit(
-        exp_function1,
-        ng,
-        xg,
-        p0=[t0, m, 0.005 * m * (1.5**15), 1],
-        bounds=(
-            [-0.2, -1e-4, -0.005 * np.abs(m) * (1.5**40), 1 / 2],
-            [0.2, 1e-4, 0.005 * np.abs(m) * (1.5**40), 2],
-        ),
-        maxfev=2000,
-    )
 
-    expfit = exp_function1(n, *popt)
-    return expfit
+    # Five free parameters in exp_function, so we need at least five
+    # residuals for curve_fit to have any chance.
+    if xg.size < 5:
+        return np.full_like(x, np.nan)
+
+    lin = scipy.stats.linregress(ng, xg)
+    m0 = float(np.clip(lin.slope, -1e-4, 1e-4))
+    t0 = float(np.clip(lin.intercept, -0.2, 0.2))
+
+    lb = [-0.2, -1e-4, -np.inf, beta_bounds[0], tau_bounds[0]]
+    ub = [0.2, 1e-4, np.inf, beta_bounds[1], tau_bounds[1]]
+
+    best = None
+    for beta0 in (0.5, 2.0):
+        A_seed = 0.005 * m0
+        for _ in range(A_scan_iters):
+            try:
+                popt, _ = scipy.optimize.curve_fit(
+                    exp_function,
+                    ng,
+                    xg,
+                    p0=[t0, m0, A_seed, beta0, tau0],
+                    bounds=(lb, ub),
+                    maxfev=2000,
+                )
+            except (RuntimeError, ValueError):
+                popt = None
+            if popt is not None:
+                r2 = calculate_r2(xg, exp_function(ng, *popt))
+                if np.isfinite(r2) and (best is None or r2 > best[0]):
+                    best = (r2, popt)
+            A_seed *= A_scan_factor
+
+    if best is None:
+        return np.full_like(x, np.nan)
+    return exp_function(n, *best[1])
 
 
 def lin_or_exp(x, xlin, xexp, return_type=False):
