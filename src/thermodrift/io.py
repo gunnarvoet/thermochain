@@ -24,10 +24,6 @@ import gvpy as gv
 logger = gv.misc.log()
 
 
-def dummy():
-    print("meow!!!")
-
-
 def load_config(configfile):
     """Load configuration (.yaml) file with
     - paths to sensor and mooring sheet
@@ -1132,92 +1128,6 @@ def offsets_from_background_fit(
             axi.invert_yaxis()
 
     return offs
-
-
-def offsets_from_background_fit_test_spline_smoothing(
-    t,
-    exclude=[1e-2, 5e-3],
-    outliers_polydeg=8,
-):
-    """Vary spline smoothing and plot results.
-
-    Parameters
-    ----------
-    t : xr.DataArray
-        Thermistor dataset. The background time-mean will be calculated over
-        the full length of the time series provided. Dimensions need to be
-        `time` and `depth`.
-    exclude : float or list
-        Exclude outliers that deviate more than this value from a polynomial
-        fit to the time-mean. Can either be a single float value or a two
-        element list. If a list with values is provided then the second
-        exclusion criterion is applied to a second fit based on a subset of
-        thermistors with those removed not passing the first exclusion
-        parameter.
-    outliers_polydeg : int, optional
-        Order of the polynomial background fit used to detect outliers. Defaults to 8.
-    """
-    depth = t.depth
-    mt = t.mean(dim="time")
-
-    xn = find_outliers(t, exclude, plot=False, polyfit_order=outliers_polydeg)
-    mt_sel = mt[xn]
-    depth_sel = depth[xn]
-
-    smooth = [1e-4, 2e-4, 3e-4, 5e-4]
-    spline_fit = []
-    for smooth_factor in smooth:
-        spl = scipy.interpolate.UnivariateSpline(depth[xn], mt[xn])
-        spl.set_smoothing_factor(smooth_factor)
-        spline_fit.append(spl(depth))
-
-    poly = [4, 8]
-    poly_fit = []
-    for poly_deg in poly:
-        pf2 = np.polynomial.polynomial.polyfit(depth[xn], mt[xn], deg=poly_deg)
-        poly_fit.append(np.polynomial.polynomial.polyval(depth, pf2))
-
-    fig, axall = plt.subplots(
-        nrows=1, ncols=2, figsize=(7.5, 5), constrained_layout=True
-    )
-    # Zoom bottom 20%
-    ax = axall[0]
-    depth_range = depth.max() - depth.min()
-    ibot = depth_sel > depth.max() - depth_range / 15
-    ibot2 = depth > depth.max() - depth_range / 15
-    ax.plot(mt_sel[ibot], depth_sel[ibot], marker=".", linestyle="", color="k")
-    for spli in spline_fit:
-        ax.plot(spli[ibot2], depth[ibot2], color="C3", alpha=0.5, label="spline")
-    for polyi in poly_fit:
-        ax.plot(
-            polyi[ibot2],
-            depth[ibot2],
-            color="C0",
-            alpha=0.5,
-            label="polynomial",
-        )
-    ax.set(xlabel="temperature [°C]", ylabel="depth [m]")
-    ax.legend()
-
-    # Top
-    ax = axall[1]
-    ibot = depth_sel < depth.min() + depth_range / 5
-    ibot2 = depth < depth.min() + depth_range / 5
-    ax.plot(mt_sel[ibot], depth_sel[ibot], marker=".", linestyle="", color="k")
-    for spli in spline_fit:
-        ax.plot(spli[ibot2], depth[ibot2], color="C3", alpha=0.5, label="spline")
-    for polyi in poly_fit:
-        ax.plot(
-            polyi[ibot2],
-            depth[ibot2],
-            color="C0",
-            alpha=0.5,
-            label="polynomial",
-        )
-    ax.set(xlabel="temperature [°C]", ylabel="depth [m]")
-
-    for axi in axall:
-        axi.invert_yaxis()
 
 
 def correct_offset(
