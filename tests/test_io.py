@@ -46,7 +46,8 @@ def test_sensor_sheet_load(input, expected, rootdir):
     """
     sensor_sheet = rootdir.joinpath(input)
     df = thermodrift.io.sensor_sheet_load(sensor_sheet)
-    assert df.ctd_cal.dtype == expected
+    assert df.pre_ctd_cal_time.dtype == expected
+    assert df.post_ctd_cal_time.dtype == expected
     assert df.loc[376].type == "sbe"
     assert df.loc[72219].type == "rbr"
 
