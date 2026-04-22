@@ -1,6 +1,6 @@
-﻿SN,Type,Depth rating,CTD Rosette Calibration,Pre-Deployment Time Calibration,Post-Deployment Time Calibration,Post-Deployment UTC Time,Post-Deployment Logger Time,Pre-Deployment Notes,Post-Deployment Notes
-376,Seabird 56,1500m,2021-10-13 16:00:00,2021-10-16 17:04:00,2022-08-09 09:17:00,2022-08-09 10:23:10,2022-08-09 10:23:28,,
-392,Seabird 56,1500m,2021-10-13 16:00:00,2021-10-16 17:04:00,2022-08-09 07:10:00,2022-08-09 08:28:00,2022-08-09 08:28:28,"one comment, another comment",
-72219,Unknown Sensor,"10,000m",2021-10-15 15:00:00,2021-10-15 12:14:00,2022-08-06 10:07:30,2022-08-06 11:48:55,2022-08-06 11:48:59,,
-201844,RBR Solo3,1700m,2021-10-13 16:00:00,2021-10-14 12:57:00,2022-08-06 14:29:08,2022-08-06 21:00:05,2022-08-06 21:00:07,,
-202306,RBR Deep,,,2021-10-15 12:14:00,2022-08-13 15:32:00,2022-08-13 15:33:28,2022-08-13 15:33:42,,comment
+SN,Type,Depth rating,Pre-Deployment CTD Calibration Time,Pre-Deployment CTD Calibration Cast,Post-Deployment CTD Calibration Time,Post-Deployment CTD Calibration Cast,Pre-Deployment Time Calibration,Post-Deployment Time Calibration,Post-Deployment UTC Time,Post-Deployment Logger Time,Pre-Deployment Notes,Post-Deployment Notes
+00376,Seabird 56,1500m,2021-10-13 16:00:00,1,,,2021-10-16 17:04:00,2022-08-09 09:17:00,2022-08-09 10:23:10,2022-08-09 10:23:28,,
+00392,Seabird 56,1500m,2021-10-13 16:00:00,1,,,2021-10-16 17:04:00,2022-08-09 07:10:00,2022-08-09 08:28:00,2022-08-09 08:28:28,"one comment, another comment",
+72219,Unknown Sensor,"10,000m",2021-10-15 15:00:00,1,,,2021-10-15 12:14:00,2022-08-06 10:07:30,2022-08-06 11:48:55,2022-08-06 11:48:59,,
+201844,RBR Solo3,1700m,2021-10-13 16:00:00,1,,,2021-10-14 12:57:00,2022-08-06 14:29:08,2022-08-06 21:00:05,2022-08-06 21:00:07,,
+202306,RBR Deep,,,,,,2021-10-15 12:14:00,2022-08-13 15:32:00,2022-08-13 15:33:28,2022-08-13 15:33:42,,comment
