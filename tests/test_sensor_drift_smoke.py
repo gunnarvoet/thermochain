@@ -1,0 +1,98 @@
+"""End-to-end smoke test for thermodrift.io.sensor_drift.
+
+Goal: exercise the full call graph on synthetic data so the refactor
+cannot silently break wiring. Does NOT assert numerical drift values.
+"""
+
+import numpy as np
+import pytest
+import tqdm
+
+from thermodrift.io import sensor_drift
+
+
+# Pre-existing deprecation noise from thermodrift.io that refactor phase 1
+# will clean up: find_outliers' z.argmax() without dim= (DeprecationWarning),
+# and an xarray GroupBy.apply call (PendingDeprecationWarning). Ignore both
+# so the smoke test stays focused on pipeline wiring.
+pytestmark = [
+    pytest.mark.filterwarnings("ignore::DeprecationWarning"),
+    pytest.mark.filterwarnings("ignore::PendingDeprecationWarning"),
+]
+
+
+@pytest.fixture(autouse=True)
+def _plain_tqdm(monkeypatch):
+    # thermodrift.io hardcodes tqdm.tqdm_notebook, which needs ipywidgets.
+    # Swap it for the plain text bar so tests don't require a Jupyter env.
+    # Refactor phase 1 will replace this with tqdm.auto.
+    monkeypatch.setattr(tqdm, "tqdm_notebook", tqdm.tqdm, raising=False)
+
+
+class TestSensorDriftSmoke:
+    def test_constructs_and_runs_full_pipeline(self, synthetic_l1_dir):
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            run_all=True,
+        )
+        # Step-by-step state is populated.
+        assert hasattr(sd, "offsets_initial")
+        assert hasattr(sd, "offsets")
+        assert hasattr(sd, "first_guess_shared_fluct_comp")
+        assert hasattr(sd, "offsets_second_guess")
+        assert hasattr(sd, "second_guess_linfit")
+        assert hasattr(sd, "second_guess_expfit")
+        assert hasattr(sd, "offsets_clean")
+        assert hasattr(sd, "drift_linfit")
+        # Final drift has window + depth axes matching the cleaned offsets.
+        # drift_linfit comes out (depth, window); offsets_clean is
+        # (window, depth). Use .sizes so the comparison is dim-aware.
+        assert sd.drift_linfit.sizes == sd.offsets_clean.sizes
+
+    def test_parses_exclude_sn(self, synthetic_l1_dir):
+        # exclude_sn only removes listed SNs from the background FIT
+        # (offsets_from_background_fit applies xn * xn2) — the returned
+        # offsets DataArray still spans every sensor. Assert only that
+        # the kwarg is parsed onto the instance.
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            drift_parameters=dict(exclude_sn=[72100]),
+            run_all=False,
+        )
+        assert sd.exclude_sn == [72100]
+        assert 72100 in sd.offsets.sn.values
+
+
+class TestSensorDriftFitMode:
+    """Mixed protection + target-behaviour — refactor step 5.2(d)."""
+
+    @pytest.mark.parametrize("fit_mode", ["linear", "auto"])
+    def test_drift_fit_shape_matches_offsets(self, synthetic_l1_dir, fit_mode):
+        # Protection: drift_fit is populated with matching shape today
+        # (current code ignores fit_mode and always uses linfit). After
+        # the refactor, both modes still produce drift_fit of the same
+        # shape.
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            drift_parameters=dict(fit_mode=fit_mode),
+            run_all=True,
+        )
+        assert hasattr(sd, "drift_fit")
+        assert sd.drift_fit.sizes == sd.offsets_clean.sizes
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="refactor step 5.2(d) — fit_type populated by lin_or_exp wiring",
+    )
+    def test_auto_mode_populates_fit_type(self, synthetic_l1_dir):
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            drift_parameters=dict(fit_mode="auto"),
+            run_all=True,
+        )
+        assert hasattr(sd, "fit_type")
+        assert set(np.unique(sd.fit_type)).issubset({"lin", "exp"})
