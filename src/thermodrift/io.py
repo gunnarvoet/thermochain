@@ -1698,15 +1698,17 @@ def linfit_ufunc(ti, n_output=None):
 
 
 def exp_function(t, t0, m, A, beta, tau):
-    gamma = scipy.special.gamma(1 / beta) * scipy.special.gammainc(1 / beta, t / tau)
-    out = t0 + m * t + A * gamma
-    return out
+    """CvHG16 Eq. 5.
 
+    ΔT(t) = ΔT₀ + m·t + A · γ(1/β, (t/τ)^β) / β
 
-def exp_function1(t, t0, m, A, beta):
-    tau = 2
-    out = exp_function(t, t0, m, A, beta, tau)
-    return out
+    with γ the lower incomplete gamma function, related to scipy's
+    regularised gammainc by γ(a, x) = Γ(a) · gammainc(a, x).
+    """
+    a = 1.0 / beta
+    z = (np.asarray(t, dtype=float) / tau) ** beta
+    lower_gamma = scipy.special.gamma(a) * scipy.special.gammainc(a, z)
+    return t0 + m * t + A * lower_gamma / beta
 
 
 def calculate_r2(x, xfit):
