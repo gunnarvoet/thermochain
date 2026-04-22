@@ -59,10 +59,6 @@ class TestExpFunctionMatchesEq5:
         got = exp_function(time_days, **params, beta=1.0, tau=20.0)
         np.testing.assert_allclose(got, ref, rtol=1e-10, atol=1e-12)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="refactor step 5.2(a) — exp_function does not yet match Eq. 5 for β ≠ 1",
-    )
     @pytest.mark.parametrize("beta", [0.5, 1.5, 2.0, 2.5])
     def test_beta_not_one_matches_reference(self, time_days, params, beta):
         ref = cvhg16_eq5(time_days, beta=beta, tau=20.0, **params)
@@ -83,10 +79,6 @@ class TestExpFunctionMatchesEq5:
         assert val[0] == pytest.approx(expected, rel=1e-6)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="refactor step 5.2(b) — expfit_ufunc does not yet accept tau0 kwarg",
-)
 class TestExpfitUfuncRecovery:
     """Target-behaviour tests for refactor step 5.2(b).
 
@@ -169,7 +161,9 @@ class TestExpfitUfuncRecovery:
             output_core_dims=[["window"]],
             vectorize=True,
         )
-        assert out.shape == da.shape
+        # apply_ufunc moves core dims to the end, so shape may reorder;
+        # sizes is dim-keyed and order-independent.
+        assert out.sizes == da.sizes
         assert not np.all(np.isnan(out.values))
 
 

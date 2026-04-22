@@ -83,10 +83,6 @@ class TestSensorDriftFitMode:
         assert hasattr(sd, "drift_fit")
         assert sd.drift_fit.sizes == sd.offsets_clean.sizes
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="refactor step 5.2(d) — fit_type populated by lin_or_exp wiring",
-    )
     def test_auto_mode_populates_fit_type(self, synthetic_l1_dir):
         sd = sensor_drift(
             mooring_name="synthetic",
