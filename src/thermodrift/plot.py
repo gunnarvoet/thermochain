@@ -3,17 +3,6 @@
 Plotting functions.
 """
 
-from pathlib import Path
-import tqdm
-import yaml
-from box import Box
-import matplotlib.pyplot as plt
-import numpy as np
-import xarray as xr
-import pandas as pd
-import rbrmoored
-import sbemoored
-import mixsea as mx
 import gvpy as gv
 
 
