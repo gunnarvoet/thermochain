@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from thermodrift.io import calculate_r2, exp_function, expfit_ufunc, linfit_ufunc
+from thermodrift.io import (
+    calculate_r2,
+    exp_function,
+    expfit_ufunc,
+    lin_or_exp,
+    linfit_ufunc,
+)
 
 from _synthetic import cvhg16_eq5, noisy_drift
 
@@ -197,3 +203,63 @@ class TestLinfitUfunc:
         assert fit.shape == x.shape
         good = ~np.isnan(x)
         np.testing.assert_allclose(fit[good], x[good], atol=1e-12)
+
+
+class TestLinOrExp:
+    """Protection tests — CvHG16 algorithm step 5 selector."""
+
+    @pytest.fixture
+    def time_axis(self):
+        return np.arange(100, dtype=float)
+
+    def test_pure_linear_picks_linear(self, time_axis):
+        # Signal is almost exactly linear; both fits are near-identical, so
+        # the R² selector has no reason to prefer exp.
+        rng = np.random.default_rng(10)
+        x = xr.DataArray(
+            1e-3 * time_axis + 5e-5 * rng.standard_normal(time_axis.size),
+            dims=("window",),
+        )
+        xlin = 1e-3 * time_axis
+        xexp = xlin + 1e-6  # indistinguishable from xlin
+        assert lin_or_exp(x, xlin, xexp, return_type=True) == "lin"
+
+    def test_clear_exponential_picks_exp(self, time_axis):
+        # Signal is an early-saturating exponential; linear fits it poorly,
+        # the exp fit is exact → selector picks exp.
+        signal = cvhg16_eq5(time_axis, 0.0, 0.0, 1e-3, 1.0, 10.0)
+        x = xr.DataArray(signal, dims=("window",))
+        coeffs = np.polyfit(time_axis, signal, 1)
+        xlin = np.polyval(coeffs, time_axis)
+        xexp = signal
+        assert lin_or_exp(x, xlin, xexp, return_type=True) == "exp"
+
+    def test_threshold_formula(self, time_axis):
+        # CvHG16 selector: pick exp iff R_exp > R_lin + 0.3 * (1 - R_lin),
+        # where R = sqrt(calculate_r2(...)). Construct xlin/xexp with known
+        # R² by controlling residual variance: R² = 1 - Var(residual)/Var(x).
+        rng = np.random.default_rng(11)
+        base_arr = rng.standard_normal(time_axis.size)
+        base_arr -= base_arr.mean()
+        var_base = base_arr.var()
+        x = xr.DataArray(base_arr, dims=("window",))
+
+        def prediction_with_r2(target_r2):
+            noise = rng.standard_normal(base_arr.size)
+            noise -= noise.mean()
+            noise *= np.sqrt((1 - target_r2) * var_base / noise.var())
+            return base_arr + noise
+
+        # R_lin = 0.5 → threshold = 0.5 + 0.3 * 0.5 = 0.65.
+        xlin = prediction_with_r2(0.25)
+        xexp_above = prediction_with_r2(0.49)  # R_exp = 0.70 > 0.65
+        xexp_below = prediction_with_r2(0.36)  # R_exp = 0.60 < 0.65
+
+        # Sanity-check the construction so failures surface as "fixture
+        # drifted" rather than "selector is wrong".
+        assert calculate_r2(base_arr, xlin) == pytest.approx(0.25, abs=0.03)
+        assert calculate_r2(base_arr, xexp_above) == pytest.approx(0.49, abs=0.03)
+        assert calculate_r2(base_arr, xexp_below) == pytest.approx(0.36, abs=0.03)
+
+        assert lin_or_exp(x, xlin, xexp_above, return_type=True) == "exp"
+        assert lin_or_exp(x, xlin, xexp_below, return_type=True) == "lin"
