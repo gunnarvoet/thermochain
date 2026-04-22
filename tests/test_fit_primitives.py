@@ -1,11 +1,14 @@
 """Unit tests for thermodrift.io fit primitives."""
 
+import functools
+
 import numpy as np
 import pytest
+import xarray as xr
 
-from thermodrift.io import calculate_r2, exp_function
+from thermodrift.io import calculate_r2, exp_function, expfit_ufunc
 
-from _synthetic import cvhg16_eq5
+from _synthetic import cvhg16_eq5, noisy_drift
 
 
 class TestCalculateR2:
@@ -72,3 +75,93 @@ class TestExpFunctionMatchesEq5:
         val = exp_function(t, **params, beta=1.0, tau=20.0)
         expected = params["t0"] + params["m"] * t[0] + params["A"]
         assert val[0] == pytest.approx(expected, rel=1e-6)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="refactor step 5.2(b) — expfit_ufunc does not yet accept tau0 kwarg",
+)
+class TestExpfitUfuncRecovery:
+    """Target-behaviour tests for refactor step 5.2(b).
+
+    Depend on the post-refactor signature
+    ``expfit_ufunc(x, tau0=20.0, tau_bounds=(5.0, 180.0), ...)``.
+    """
+
+    def test_recovers_slow_tau_parameters(self):
+        # Slow relaxation — the MOTIVE use case.
+        n = 120  # ~4 months of 1-d windows
+        _, x = noisy_drift(
+            n_windows=n,
+            t0=0.0, m=1e-5, A=1e-3, beta=1.0, tau=20.0,
+            noise_std=2e-4, seed=1,
+        )
+        fit = expfit_ufunc(x, tau0=20.0, tau_bounds=(5.0, 180.0))
+        assert np.std(x - fit) < 4e-4
+
+    def test_recovers_fast_tau_parameters(self):
+        # NIOZ-style fast relaxation — keeps old behaviour reachable.
+        n = 90
+        _, x = noisy_drift(
+            n_windows=n,
+            t0=0.0, m=1e-5, A=2e-3, beta=1.0, tau=2.0,
+            noise_std=1e-4, seed=2,
+        )
+        fit = expfit_ufunc(x, tau0=2.0, tau_bounds=(0.5, 30.0))
+        assert np.std(x - fit) < 3e-4
+
+    def test_returns_nan_on_all_nan_input(self):
+        x = np.full(50, np.nan)
+        fit = expfit_ufunc(x, tau0=20.0)
+        assert np.all(np.isnan(fit))
+
+    def test_preserves_length(self):
+        _, x = noisy_drift(
+            n_windows=100, t0=0.0, m=1e-5, A=1e-3, beta=1.0, tau=20.0,
+            noise_std=2e-4, seed=3,
+        )
+        fit = expfit_ufunc(x, tau0=20.0)
+        assert fit.shape == x.shape
+
+    def test_preserves_length_with_nans(self):
+        # NaNs in input — output length matches; NaN policy pinned by
+        # test_runs_through_apply_ufunc below.
+        _, x = noisy_drift(
+            n_windows=100, t0=0.0, m=1e-5, A=1e-3, beta=1.0, tau=20.0,
+            noise_std=2e-4, seed=4,
+        )
+        x[::11] = np.nan
+        fit = expfit_ufunc(x, tau0=20.0)
+        assert fit.shape == x.shape
+
+    @pytest.mark.parametrize(
+        "tau0, tau_bounds",
+        [
+            (20.0, (5.0, 180.0)),
+            (2.0, (0.5, 30.0)),
+        ],
+    )
+    def test_runs_through_apply_ufunc(self, tau0, tau_bounds):
+        # This is how sensor_drift actually calls it. Exercise the
+        # xr.apply_ufunc path to make sure lambda/partial wiring works.
+        rng = np.random.default_rng(5)
+        arr = np.stack(
+            [
+                cvhg16_eq5(np.arange(100), 0.0, 1e-5, 1e-3, 1.0, tau0)
+                + rng.standard_normal(100) * 2e-4
+                for _ in range(3)
+            ],
+            axis=1,
+        )
+        da = xr.DataArray(arr, dims=("window", "depth"))
+        fitter = functools.partial(
+            expfit_ufunc, tau0=tau0, tau_bounds=tau_bounds,
+        )
+        out = xr.apply_ufunc(
+            fitter, da,
+            input_core_dims=[["window"]],
+            output_core_dims=[["window"]],
+            vectorize=True,
+        )
+        assert out.shape == da.shape
+        assert not np.all(np.isnan(out.values))
