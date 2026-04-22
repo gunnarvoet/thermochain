@@ -65,7 +65,13 @@ def load_config_box(configfile) -> Box:
     cfg.path.root = configfile.parent.parent.resolve()
     cfg.path.fig = cfg.path.root.joinpath(cfg.path.fig)
     cfg.path.data.proc = cfg.path.root.joinpath(cfg.path.data.proc)
-    cfg.path.data.raw = cfg.path.root.joinpath(cfg.path.data.raw)
+    # `data.raw` may be a single path or a per-instrument mapping
+    # (e.g. {rbr: …, sbe: …}). Resolve each leaf relative to root.
+    if isinstance(cfg.path.data.raw, Box):
+        for key, val in cfg.path.data.raw.items():
+            cfg.path.data.raw[key] = cfg.path.root.joinpath(val)
+    else:
+        cfg.path.data.raw = cfg.path.root.joinpath(cfg.path.data.raw)
     for level in range(3):
         cfg.path.data[f"procl{level}"] = cfg.path.data.proc.joinpath(f"l{level}")
         # create directories but check if they may not be there because data/ is
