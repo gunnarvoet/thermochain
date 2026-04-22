@@ -1492,6 +1492,19 @@ class sensor_drift:
                 output_core_dims=[["window"]],
                 vectorize=True,
             )
+            self.drift_exp_params = xr.apply_ufunc(
+                functools.partial(
+                    _fit_cvhg16_params,
+                    tau0=self.tau0,
+                    tau_bounds=self.tau_bounds,
+                    beta_bounds=self.beta_bounds,
+                ),
+                self.offsets_clean,
+                input_core_dims=[["window"]],
+                output_core_dims=[["param"]],
+                vectorize=True,
+                dask_gufunc_kwargs={"output_sizes": {"param": 5}},
+            ).assign_coords(param=list(EXP_PARAM_NAMES))
             if self.fit_mode == "exp":
                 self.drift_fit = self.drift_expfit
                 self.fit_type = xr.DataArray(
@@ -1682,16 +1695,30 @@ class sensor_drift:
         anno_opts = dict(backgroundcolor="w")
         ax1.annotate(
             f"Rlin$^2$={r2fitlin.data:1.3f}",
-            xy=(0.2, 0.05),
+            xy=(0.02, 0.05),
             xycoords="axes fraction",
             **anno_opts,
         )
         ax1.annotate(
             f"Rexp$^2$={r2fitexp.data:1.3f}",
-            xy=(0.4, 0.05),
+            xy=(0.22, 0.05),
             xycoords="axes fraction",
             **anno_opts,
         )
+        if hasattr(self, "drift_exp_params"):
+            params = self.drift_exp_params.isel(depth=zi)
+            tau = float(params.sel(param="tau").data)
+            beta = float(params.sel(param="beta").data)
+            if np.isfinite(tau) and np.isfinite(beta):
+                label = rf"$\tau$={tau:.1f}d, $\beta$={beta:.2f}"
+            else:
+                label = r"$\tau$=—, $\beta$=—"
+            ax1.annotate(
+                label,
+                xy=(0.42, 0.05),
+                xycoords="axes fraction",
+                **anno_opts,
+            )
         ax1.grid()
         ax1.set(title="")
         fig.suptitle(
@@ -1758,7 +1785,10 @@ def calculate_r2(x, xfit):
     return 1 - SSres / SStot
 
 
-def expfit_ufunc(
+EXP_PARAM_NAMES = ("t0", "m", "A", "beta", "tau")
+
+
+def _fit_cvhg16_params(
     x,
     tau0=20.0,
     tau_bounds=(5.0, 180.0),
@@ -1766,18 +1796,13 @@ def expfit_ufunc(
     A_scan_factor=1.5,
     A_scan_iters=40,
 ):
-    """Fit CvHG16 Eq. 5 to a 1-d offset series.
+    """Fit CvHG16 Eq. 5 to a 1-d offset series, returning the parameters.
 
-    Implements the paper's algorithm (JTECH-D-15-0243.1 §4a): seed from a
-    linear regression, then run Nelder-Mead-style bounded least-squares
-    with β seeds {0.5, 2.0}, scanning the relaxation amplitude A by a
-    factor of ``A_scan_factor`` for up to ``A_scan_iters`` steps. The
-    returned fit is the best-R² candidate evaluated at every index of
-    ``x`` (including indices where ``x`` is NaN). Returns all-NaN if the
-    series has fewer than 5 finite points or every attempt raised.
-
-    ``tau0`` / ``tau_bounds`` are the main knobs for RBR/SBE vs. NIOZ
-    instruments — NIOZ needs τ₀ ≈ 2 d, RBR/SBE ≈ 20 d.
+    Shared core between ``expfit_ufunc`` (which evaluates the best-R² fit
+    back onto the full index range) and diagnostic code that needs
+    ``[t0, m, A, beta, tau]``. Returns a length-5 NaN vector when the
+    series has fewer than 5 finite points, every ``curve_fit`` attempt in
+    the β / A scan raised, or no candidate yielded a finite R².
     """
     n = np.arange(len(x))
     good = ~np.isnan(x)
@@ -1787,7 +1812,7 @@ def expfit_ufunc(
     # Five free parameters in exp_function, so we need at least five
     # residuals for curve_fit to have any chance.
     if xg.size < 5:
-        return np.full_like(x, np.nan)
+        return np.full(5, np.nan)
 
     lin = scipy.stats.linregress(ng, xg)
     m0 = float(np.clip(lin.slope, -1e-4, 1e-4))
@@ -1818,8 +1843,42 @@ def expfit_ufunc(
             A_seed *= A_scan_factor
 
     if best is None:
-        return np.full_like(x, np.nan)
-    return exp_function(n, *best[1])
+        return np.full(5, np.nan)
+    return np.asarray(best[1], dtype=float)
+
+
+def expfit_ufunc(
+    x,
+    tau0=20.0,
+    tau_bounds=(5.0, 180.0),
+    beta_bounds=(1.0 / 3.0, 3.0),
+    A_scan_factor=1.5,
+    A_scan_iters=40,
+):
+    """Fit CvHG16 Eq. 5 to a 1-d offset series.
+
+    Implements the paper's algorithm (JTECH-D-15-0243.1 §4a): seed from a
+    linear regression, then run Nelder-Mead-style bounded least-squares
+    with β seeds {0.5, 2.0}, scanning the relaxation amplitude A by a
+    factor of ``A_scan_factor`` for up to ``A_scan_iters`` steps. The
+    returned fit is the best-R² candidate evaluated at every index of
+    ``x`` (including indices where ``x`` is NaN). Returns all-NaN if the
+    series has fewer than 5 finite points or every attempt raised.
+
+    ``tau0`` / ``tau_bounds`` are the main knobs for RBR/SBE vs. NIOZ
+    instruments — NIOZ needs τ₀ ≈ 2 d, RBR/SBE ≈ 20 d.
+    """
+    popt = _fit_cvhg16_params(
+        x,
+        tau0=tau0,
+        tau_bounds=tau_bounds,
+        beta_bounds=beta_bounds,
+        A_scan_factor=A_scan_factor,
+        A_scan_iters=A_scan_iters,
+    )
+    if np.any(np.isnan(popt)):
+        return np.full_like(x, np.nan, dtype=float)
+    return exp_function(np.arange(len(x)), *popt)
 
 
 def lin_or_exp(x, xlin, xexp, return_type=False):

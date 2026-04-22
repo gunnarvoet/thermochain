@@ -92,3 +92,33 @@ class TestSensorDriftFitMode:
         )
         assert hasattr(sd, "fit_type")
         assert set(np.unique(sd.fit_type)).issubset({"lin", "exp"})
+
+    @pytest.mark.parametrize("fit_mode", ["auto", "exp"])
+    def test_drift_exp_params_shape_and_coord(self, synthetic_l1_dir, fit_mode):
+        # drift_exp_params backs the τ / β annotations on
+        # plot_drift_sensor_and_neighbors and lets downstream notebooks
+        # inspect the per-sensor exponential parameters.
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            drift_parameters=dict(fit_mode=fit_mode),
+            run_all=True,
+        )
+        assert hasattr(sd, "drift_exp_params")
+        assert sd.drift_exp_params.sizes["depth"] == sd.offsets_clean.sizes["depth"]
+        assert sd.drift_exp_params.sizes["param"] == 5
+        assert list(sd.drift_exp_params.param.values) == [
+            "t0", "m", "A", "beta", "tau",
+        ]
+
+    def test_linear_mode_skips_exp_params(self, synthetic_l1_dir):
+        # In linear mode no exponential fit is attempted, so the param
+        # array is not populated — plot_drift_sensor_and_neighbors falls
+        # back gracefully via the hasattr guard.
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            drift_parameters=dict(fit_mode="linear"),
+            run_all=True,
+        )
+        assert not hasattr(sd, "drift_exp_params")
