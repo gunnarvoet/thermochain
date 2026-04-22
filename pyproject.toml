@@ -59,6 +59,10 @@ filterwarnings = [
     "error",
     # note the use of single quote below to denote "raw" strings in TOML
     'ignore:invalid escape sequence:DeprecationWarning',
+    # netCDF4 wheels ship with an older numpy ABI stamp — cosmetic,
+    # the module works at runtime. Triggered via gvpy.trilaterate
+    # importing netCDF4 at module load.
+    'ignore:numpy\.ndarray size changed:RuntimeWarning',
 ]
 
 [tool.pdm]
