@@ -2,6 +2,8 @@
 
 """Tests for `thermodrift` package."""
 
+from pathlib import Path
+
 import pytest
 
 import thermodrift
@@ -75,3 +77,57 @@ def test_proc_db(rootdir):
 def test_generate_processing_object(config_file_path):
     M = thermodrift.io.ProcessThermistorMooring(config_file_path)
     assert M.sensor_info.loc[376].type == "sbe"
+
+
+class TestResolvePathVars:
+    def test_resolves_data_prefix(self):
+        out = thermodrift.io._resolve_path_vars(
+            "$data/foo/bar.nc",
+            data_root=Path("/abs/data"),
+            project_root=Path("/abs/proj"),
+        )
+        assert out == Path("/abs/data/foo/bar.nc")
+
+    def test_resolves_root_prefix(self):
+        out = thermodrift.io._resolve_path_vars(
+            "$root/parameters/x.csv",
+            data_root=Path("/abs/data"),
+            project_root=Path("/abs/proj"),
+        )
+        assert out == Path("/abs/proj/parameters/x.csv")
+
+    def test_recurses_dicts_and_lists(self):
+        obj = {
+            "a": "$data/x",
+            "b": ["$root/y", "plain"],
+            "c": {"d": "$data/z"},
+        }
+        out = thermodrift.io._resolve_path_vars(
+            obj, data_root=Path("/d"), project_root=Path("/p")
+        )
+        assert out == {
+            "a": Path("/d/x"),
+            "b": [Path("/p/y"), "plain"],
+            "c": {"d": Path("/d/z")},
+        }
+
+    def test_passes_through_non_strings(self):
+        assert thermodrift.io._resolve_path_vars(
+            42, Path("/d"), Path("/p")
+        ) == 42
+        assert thermodrift.io._resolve_path_vars(
+            None, Path("/d"), Path("/p")
+        ) is None
+
+    def test_raises_when_data_prefix_lacks_data_root(self):
+        with pytest.raises(ValueError, match="data_root"):
+            thermodrift.io._resolve_path_vars(
+                "$data/foo", data_root=None, project_root=Path("/p")
+            )
+
+    def test_data_root_unused_is_fine(self):
+        # No $data/ in the input → data_root may be None.
+        out = thermodrift.io._resolve_path_vars(
+            {"a": "$root/x"}, data_root=None, project_root=Path("/p")
+        )
+        assert out == {"a": Path("/p/x")}

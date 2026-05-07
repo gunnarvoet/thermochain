@@ -43,6 +43,45 @@ def load_config(configfile):
         return yaml.safe_load(ymlfile)
 
 
+def _resolve_path_vars(obj, data_root, project_root):
+    """Recursively replace ``$data/...`` and ``$root/...`` strings with absolute Paths.
+
+    Parameters
+    ----------
+    obj : Any
+        Raw value from the parsed YAML (str, dict, list, or any leaf type).
+    data_root : pathlib.Path or None
+        Anchor for ``$data/`` prefixes. May be ``None`` only when no
+        ``$data/`` prefix is present in the tree.
+    project_root : pathlib.Path
+        Anchor for ``$root/`` prefixes.
+
+    Raises
+    ------
+    ValueError
+        If a ``$data/`` prefix is encountered but ``data_root`` is ``None``.
+    """
+    if isinstance(obj, str):
+        if obj.startswith("$data/"):
+            if data_root is None:
+                raise ValueError(
+                    "config uses '$data/' prefix but data_root was not provided "
+                    "to load_config_box; pass data_root=<Path> explicitly."
+                )
+            return data_root / obj[6:]
+        if obj.startswith("$root/"):
+            return project_root / obj[6:]
+        return obj
+    if isinstance(obj, dict):
+        return {
+            k: _resolve_path_vars(v, data_root, project_root)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_resolve_path_vars(item, data_root, project_root) for item in obj]
+    return obj
+
+
 def load_config_box(configfile) -> Box:
     """Load the yaml config file as Box object which is basically a dict with
     dot access.
