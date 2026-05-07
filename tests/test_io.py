@@ -169,3 +169,29 @@ class TestLoadConfigBoxWithVars:
         cfg = thermodrift.io.load_config_box(config_file_path)
         assert cfg.path.root == config_file_path.parent.parent.resolve()
         assert cfg.path.data.proc == cfg.path.root / "data/proc/mavs3"
+
+
+class TestProcessThermistorMooringWithVars:
+    def test_forwards_data_and_project_root(self, rootdir, tmp_path):
+        import shutil
+
+        proj = tmp_path / "proj"
+        (proj / "data/raw/rbrsolo").mkdir(parents=True)
+        (proj / "data/raw/sbe56").mkdir(parents=True)
+        shutil.copy(
+            rootdir / "data/sensor_sheet.xlsx", proj / "data/sensor_sheet.xlsx"
+        )
+        shutil.copy(
+            rootdir / "data/mooring_sheet.csv", proj / "data/mooring_sheet.csv"
+        )
+
+        cfg_path = rootdir / "data/config_with_vars.yml"
+        M = thermodrift.io.ProcessThermistorMooring(
+            cfg_path,
+            project_root=proj,
+            data_root=proj / "data",
+        )
+        assert M.cfg.path.root == proj
+        assert M.cfg.path.data.proc == proj / "data/proc/testmoor"
+        assert M.cfg.path.data.procl0 == proj / "data/proc/testmoor/l0"
+        assert M.cfg.path.sensors == proj / "data/sensor_sheet.xlsx"

@@ -516,15 +516,21 @@ def plot_multiple_cal_stop(ts, rbr, ctd, dt=2):
 class ProcessThermistorMooring:
     """Process thermistors on one mooring."""
 
-    def __init__(self, config_file):
+    def __init__(self, config_file, project_root=None, data_root=None):
         """Initialize processing object for one mooring.
 
         Parameters
         ----------
         config_file : pathlib.Path or str
             .yaml configuration file
+        project_root : pathlib.Path or None, optional
+            Forwarded to ``load_config_box``. See its docstring.
+        data_root : pathlib.Path or None, optional
+            Forwarded to ``load_config_box``. See its docstring.
         """
-        self.cfg = load_config_box(config_file)
+        self.cfg = load_config_box(
+            config_file, project_root=project_root, data_root=data_root
+        )
         # add L0/L1/L2 sub-directories to the figure path
         for i in range(3):
             self.cfg.path[f"figl{i}"] = self.cfg.path.fig.joinpath(f"l{i}")
