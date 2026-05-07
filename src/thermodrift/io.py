@@ -82,23 +82,50 @@ def _resolve_path_vars(obj, data_root, project_root):
     return obj
 
 
-def load_config_box(configfile) -> Box:
+def load_config_box(configfile, project_root=None, data_root=None) -> Box:
     """Load the yaml config file as Box object which is basically a dict with
     dot access.
+
+    Resolves ``$data/`` and ``$root/`` placeholders before wrapping the
+    parsed YAML in a Box. ``$root/`` resolves against ``project_root``
+    (default: ``configfile.parent.parent``); ``$data/`` resolves against
+    ``data_root`` and is required only when the YAML actually contains a
+    ``$data/`` prefix.
+
+    Parameters
+    ----------
+    configfile : pathlib.Path or str
+        Path to the YAML config file.
+    project_root : pathlib.Path or None, optional
+        Override for the project root. Defaults to
+        ``configfile.parent.parent.resolve()``.
+    data_root : pathlib.Path or None, optional
+        Anchor for ``$data/`` prefixes. Required when the YAML contains
+        ``$data/``; otherwise ignored.
 
     Returns
     -------
     cfg : Box
         Config parameters dictionary with dot access.
 
+    Raises
+    ------
+    ValueError
+        If the YAML uses ``$data/`` but ``data_root`` is not supplied.
+
     See also
     --------
     `load_config`
     """
+    configfile = Path(configfile)
+    if project_root is None:
+        project_root = configfile.parent.parent.resolve()
 
     with open(configfile, "r") as ymlfile:
-        cfg = Box(yaml.safe_load(ymlfile))
-    cfg.path.root = configfile.parent.parent.resolve()
+        raw = yaml.safe_load(ymlfile)
+    raw = _resolve_path_vars(raw, data_root=data_root, project_root=project_root)
+    cfg = Box(raw)
+    cfg.path.root = project_root
     cfg.path.fig = cfg.path.root.joinpath(cfg.path.fig)
     cfg.path.data.proc = cfg.path.root.joinpath(cfg.path.data.proc)
     # `data.raw` may be a single path or a per-instrument mapping

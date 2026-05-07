@@ -1,0 +1,20 @@
+info: test config with $-prefixes
+
+meta:
+  mooring_name: testmoor
+  project: TestProject
+  PI: Test User
+  email: test@example.com
+
+path:
+  fig: $root/fig/testmoor/
+  data:
+    raw:
+      rbr: $data/raw/rbrsolo/
+      sbe: $data/raw/sbe56/
+    proc: $data/proc/testmoor/
+  sensors: $root/data/sensor_sheet.xlsx
+  mooring: $root/data/mooring_sheet.csv
+
+start_time: 2021-10-22 20:30:00
+end_time: 2022-08-04 13:45:00

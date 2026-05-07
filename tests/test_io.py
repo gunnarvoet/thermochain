@@ -131,3 +131,41 @@ class TestResolvePathVars:
             {"a": "$root/x"}, data_root=None, project_root=Path("/p")
         )
         assert out == {"a": Path("/p/x")}
+
+
+class TestLoadConfigBoxWithVars:
+    @pytest.fixture
+    def vars_config_path(self, rootdir):
+        return rootdir / "data/config_with_vars.yml"
+
+    def test_resolves_data_and_root_prefixes(self, vars_config_path, tmp_path):
+        data_root = tmp_path / "alt_data"
+        cfg = thermodrift.io.load_config_box(
+            vars_config_path,
+            project_root=tmp_path,
+            data_root=data_root,
+        )
+        assert cfg.path.root == tmp_path
+        assert cfg.path.data.proc == data_root / "proc/testmoor"
+        assert cfg.path.data.raw.rbr == data_root / "raw/rbrsolo"
+        assert cfg.path.data.raw.sbe == data_root / "raw/sbe56"
+        assert cfg.path.sensors == tmp_path / "data/sensor_sheet.xlsx"
+        for level in range(3):
+            assert cfg.path.data[f"procl{level}"] == data_root / f"proc/testmoor/l{level}"
+
+    def test_default_project_root_is_configfile_parent_parent(self, vars_config_path, tmp_path):
+        # data_root must be supplied because the YAML uses $data/.
+        cfg = thermodrift.io.load_config_box(
+            vars_config_path, data_root=tmp_path / "d"
+        )
+        assert cfg.path.root == vars_config_path.parent.parent.resolve()
+
+    def test_raises_when_data_prefix_present_but_data_root_missing(self, vars_config_path):
+        with pytest.raises(ValueError, match="data_root"):
+            thermodrift.io.load_config_box(vars_config_path)
+
+    def test_existing_no_dollar_yaml_unchanged(self, config_file_path):
+        # Regression: the original test config has no $-prefixes.
+        cfg = thermodrift.io.load_config_box(config_file_path)
+        assert cfg.path.root == config_file_path.parent.parent.resolve()
+        assert cfg.path.data.proc == cfg.path.root / "data/proc/mavs3"
