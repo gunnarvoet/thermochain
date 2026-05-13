@@ -357,12 +357,17 @@ def proc_db_generate(sensor_sheet):
         Processing database.
     """
 
-    proc_db = sensor_sheet[["type", "time_cal1", "time_cal2"]].copy()
+    cols = ["type", "time_cal1", "time_cal2"]
+    for opt in ("clock_read_utc", "clock_read_logger"):
+        if opt in sensor_sheet.columns:
+            cols.append(opt)
+    proc_db = sensor_sheet[cols].copy()
     n = proc_db.index.shape[0]
 
     proc_db = proc_db.assign(processed=np.tile(False, n))
     proc_db = proc_db.assign(raw_data_exists=proc_db.processed.copy())
     proc_db = proc_db.assign(figure_exists=proc_db.processed.copy())
+    proc_db = proc_db.assign(time_offset_applied=np.full(n, np.nan))
     proc_db = proc_db.assign(comment=np.tile("ok", n))
     proc_db = proc_db.assign(mooring=np.tile(None, n))
 
@@ -409,6 +414,7 @@ def get_file_name(sn, data_dir, type):
 
 
 def proc_db_update_files(proc_db, data_raw, data_out, figure_out):
+    has_offset_col = "time_offset_applied" in proc_db.columns
     for g, v in proc_db.groupby("SN"):
         f = get_file_name(g, data_dir=data_raw, type=v.type.item())
         if f is not None:
@@ -416,9 +422,31 @@ def proc_db_update_files(proc_db, data_raw, data_out, figure_out):
         f = get_file_name(g, data_dir=data_out, type="nc")
         if f is not None:
             proc_db.loc[g, "processed"] = True
+            if has_offset_col:
+                proc_db.loc[g, "time_offset_applied"] = _read_time_offset_applied(f)
         f = get_file_name(g, data_dir=figure_out, type="png")
         if f is not None:
             proc_db.loc[g, "figure_exists"] = True
+
+
+def _read_time_offset_applied(l0_file):
+    """Return the ``time offset applied`` attr from an L0 file as float (NaN if absent).
+
+    The attr is stored on the ``t`` data variable by ``rbrmoored`` / ``sbemoored``.
+    A value of ``1`` means a clock correction was applied during L0 generation;
+    ``0`` or missing means the L0 was written without one. Returning NaN on any
+    open failure keeps the proc_db update non-fatal.
+    """
+    try:
+        with xr.open_dataset(l0_file) as ds:
+            var = ds["t"] if "t" in ds.data_vars else ds[list(ds.data_vars)[0]]
+            val = var.attrs.get("time offset applied", np.nan)
+    except (OSError, KeyError, IndexError):
+        return np.nan
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return np.nan
 
 
 def rbr_save_ctd_cal_time_series(l0_data, ctd_time, save_dir):
