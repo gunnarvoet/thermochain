@@ -4,6 +4,7 @@
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 import thermodrift
@@ -59,6 +60,81 @@ def test_read_sensor_config_csv_fail(rootdir):
     assert sensor_sheet.exists()
     with pytest.raises(ValueError):
         df = thermodrift.io.sensor_sheet_load(sensor_sheet)
+
+
+def _make_sensor_sheet(rows):
+    df = pd.DataFrame(rows).set_index("sn")
+    df.index.name = "SN"
+    return df
+
+
+def _make_layout(rows):
+    df = pd.DataFrame(rows).set_index("sn")
+    df.index.name = "SN"
+    return df
+
+
+def test_validate_thermistor_metadata_clean():
+    sensor_sheet = _make_sensor_sheet(
+        [
+            {"sn": 376, "type": "sbe", "Mooring": "MOTIVE A"},
+            {"sn": 418, "type": "sbe", "Mooring": "MOTIVE B"},
+            {"sn": 72144, "type": "rbr", "Mooring": "MOTIVE A"},
+        ]
+    )
+    layouts = {
+        "A": _make_layout(
+            [
+                {"sn": 376, "type": "sbe", "depth": 100.0},
+                {"sn": 72144, "type": "rbr", "depth": 200.0},
+            ]
+        ),
+        "B": _make_layout(
+            [
+                {"sn": 418, "type": "sbe", "depth": 150.0},
+            ]
+        ),
+    }
+    assert thermodrift.io.validate_thermistor_metadata(sensor_sheet, layouts) == []
+
+
+def test_validate_thermistor_metadata_catches_issues():
+    sensor_sheet = _make_sensor_sheet(
+        [
+            {"sn": 376, "type": "sbe", "Mooring": "MOTIVE A"},
+            {"sn": 418, "type": "sbe", "Mooring": "MOTIVE B"},
+            # 6413 declared on A in sensor sheet but absent from layouts["A"]
+            {"sn": 6413, "type": "sbe", "Mooring": "MOTIVE A"},
+            # 72144 declares an unmapped mooring "Z"
+            {"sn": 72144, "type": "rbr", "Mooring": "MOTIVE Z"},
+            # 99999 has NaN mooring — should be ignored, not crash
+            {"sn": 99999, "type": "rbr", "Mooring": float("nan")},
+        ]
+    )
+    layouts = {
+        "A": _make_layout(
+            [
+                {"sn": 376, "type": "sbe", "depth": 100.0},
+                # 9999 in layout but not in sensor sheet
+                {"sn": 9999, "type": "sbe", "depth": 250.0},
+                # duplicate SN in layout A
+                {"sn": 376, "type": "sbe", "depth": 110.0},
+            ]
+        ),
+        "B": _make_layout(
+            [
+                # type mismatch: layout says rbr, sensor sheet says sbe
+                {"sn": 418, "type": "rbr", "depth": 150.0},
+            ]
+        ),
+    }
+    warnings = thermodrift.io.validate_thermistor_metadata(sensor_sheet, layouts)
+    joined = "\n".join(warnings)
+    assert "duplicate SN(s) [376]" in joined
+    assert "SN 9999 not in sensor sheet" in joined
+    assert "SN 6413 declared on mooring A but not in its layout" in joined
+    assert "SN 72144 declares mooring 'Z' but no layout provided" in joined
+    assert "SN 418 type 'rbr' != sensor-sheet type 'sbe'" in joined
 
 
 def test_mooring_sheet_load(rootdir):

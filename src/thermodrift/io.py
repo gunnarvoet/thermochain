@@ -186,6 +186,98 @@ def sensor_sheet_load(path):
     return df
 
 
+def validate_thermistor_metadata(sensor_sheet, layouts, *, mooring_col="Mooring"):
+    """Cross-check a sensor sheet against per-mooring layout tables.
+
+    Reports SNs that appear in a layout but not in the sensor sheet, SNs
+    declared on a mooring by the sensor sheet but missing from that
+    mooring's layout, `type` mismatches between the two sources, and
+    duplicate SNs within any single layout. Returns a list of warning
+    strings; the caller decides whether to raise.
+
+    Both inputs are expected to have their `type` column normalised
+    (i.e. already passed through `unify_sensor_type`), which is the case
+    when they come from `sensor_sheet_load` and `mooring_sheet_load`.
+
+    Parameters
+    ----------
+    sensor_sheet : pandas.DataFrame
+        Output of `sensor_sheet_load`; indexed by SN, must include a
+        mooring column (default `Mooring`) and a lowercase `type` column.
+    layouts : dict of str to pandas.DataFrame
+        Mapping `mooring_id` (e.g. `"A"`) to the output of
+        `mooring_sheet_load`. The mooring_id must match the trailing
+        character of `sensor_sheet[mooring_col]` (e.g. `"A"` matches
+        `"MOTIVE A"`).
+    mooring_col : str, optional
+        Column in `sensor_sheet` carrying the mooring label. Default
+        `"Mooring"`.
+
+    Returns
+    -------
+    warnings : list of str
+        Human-readable warning strings. Empty list means no issues.
+
+    Examples
+    --------
+    >>> dfc = sensor_sheet_load("sensor_sheet.csv")
+    >>> layouts = {
+    ...     m: mooring_sheet_load(f"mooring_{m.lower()}.csv")
+    ...     for m in ("A", "B", "C")
+    ... }
+    >>> for w in validate_thermistor_metadata(dfc, layouts):
+    ...     print(w)
+    """
+    warnings = []
+
+    # Duplicate SNs within a single layout
+    for m, layout in layouts.items():
+        dup_mask = layout.index.duplicated()
+        if dup_mask.any():
+            dup_sns = sorted(set(layout.index[dup_mask].tolist()))
+            warnings.append(f"Mooring {m} layout: duplicate SN(s) {dup_sns}")
+
+    # SNs in a layout but missing from the sensor sheet
+    sensor_index = set(sensor_sheet.index)
+    for m, layout in layouts.items():
+        missing = sorted(set(layout.index) - sensor_index)
+        for sn in missing:
+            warnings.append(f"Mooring {m} layout: SN {sn} not in sensor sheet")
+
+    # SNs in the sensor sheet (for mooring M) but missing from layouts[M]
+    for sn, mooring_val in sensor_sheet[mooring_col].items():
+        if pd.isna(mooring_val):
+            continue
+        m = str(mooring_val)[-1]
+        if m not in layouts:
+            warnings.append(
+                f"Sensor sheet: SN {sn} declares mooring '{m}' "
+                f"but no layout provided for it"
+            )
+            continue
+        if sn not in layouts[m].index:
+            warnings.append(
+                f"Sensor sheet: SN {sn} declared on mooring {m} "
+                f"but not in its layout"
+            )
+
+    # Type mismatches between sensor sheet and layout
+    sheet_types = sensor_sheet["type"].to_dict()
+    for m, layout in layouts.items():
+        layout_types = layout["type"][~layout.index.duplicated()].to_dict()
+        for sn, layout_type in layout_types.items():
+            sheet_type = sheet_types.get(sn)
+            if sheet_type is None:
+                continue  # already flagged as missing from sensor sheet
+            if sheet_type != layout_type:
+                warnings.append(
+                    f"Mooring {m} layout: SN {sn} type '{layout_type}' "
+                    f"!= sensor-sheet type '{sheet_type}'"
+                )
+
+    return warnings
+
+
 def sensor_sheet_csv_load(path):
     """Load sensor spreadsheet in .csv format.
     See template for expected headers etc.
