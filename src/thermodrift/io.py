@@ -845,6 +845,50 @@ def find_gaps(thermistor):
     return tdi
 
 
+def _insert_gap_nans(da, max_gap):
+    """Insert NaN samples bracketing gaps larger than `max_gap` so that
+    subsequent `interp_like` does not bridge real dropouts.
+
+    Sentinels are placed one nanosecond after the last pre-gap sample
+    and one nanosecond before the first post-gap sample. Any target
+    point falling inside the gap will then linearly-interpolate
+    between two NaN endpoints and resolve to NaN.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Time series with a monotonic `time` coordinate.
+    max_gap : np.timedelta64
+        Source sample spacing strictly greater than this is treated as
+        a gap.
+
+    Returns
+    -------
+    xr.DataArray
+        Original samples plus NaN sentinels, sorted by time. If no
+        gaps exceed `max_gap`, returns `da` unchanged.
+    """
+    if da.time.size < 2:
+        return da
+    spacing = da.time.diff("time").values
+    big = np.where(spacing > max_gap)[0]
+    if len(big) == 0:
+        return da
+    edge_times = []
+    times = da.time.values
+    for i in big:
+        edge_times.append(times[i] + np.timedelta64(1, "ns"))
+        edge_times.append(times[i + 1] - np.timedelta64(1, "ns"))
+    sentinels = xr.DataArray(
+        np.full(len(edge_times), np.nan, dtype=da.dtype),
+        coords={"time": np.array(edge_times, dtype="datetime64[ns]")},
+        dims=["time"],
+    )
+    out = xr.concat([da, sentinels], dim="time").sortby("time")
+    out.attrs = da.attrs
+    return out
+
+
 def rbr_find_first_long_gap(tdi):
     t0 = find_first_long_gap(tdi)
     if ~np.isnat(t0):
@@ -869,6 +913,60 @@ def rbr_apply_ctd_offset(thermistor, sn, ctdcal):
     else:
         print(f"no cal for {sn}")
         return thermistor
+
+
+def apply_interpolated_ctd_offset(
+    thermistor, sn, ctdcal_pre, ctdcal_post, t_pre, t_post
+):
+    """Apply linear-in-time pre→post CTD offset to a thermistor series.
+
+    The interpolation factor ``(t - t_pre) / (t_post - t_pre)`` is
+    clamped to ``[0, 1]`` so samples outside the bracket get the
+    corresponding endpoint offset. Returns ``None`` when either offset
+    or cast time is missing for ``sn``; callers are expected to fall
+    back to a scalar offset in that case.
+
+    Parameters
+    ----------
+    thermistor : xr.DataArray
+        Series with a ``time`` coord (``datetime64``).
+    sn : int
+        Sensor serial number.
+    ctdcal_pre, ctdcal_post : xr.DataArray or None
+        Per-sensor offsets indexed by ``sn`` from the pre- and
+        post-deployment CTD casts.
+    t_pre, t_post : np.datetime64 or pandas timestamp
+        Times of the pre- and post-deployment CTD casts.
+
+    Returns
+    -------
+    xr.DataArray or None
+        Calibrated series, or ``None`` if interpolation is not possible.
+    """
+    if ctdcal_pre is None or ctdcal_post is None:
+        return None
+    if sn not in ctdcal_pre.sn or sn not in ctdcal_post.sn:
+        return None
+    if pd.isna(t_pre) or pd.isna(t_post):
+        return None
+    o_pre = float(ctdcal_pre.sel(sn=sn).data)
+    o_post = float(ctdcal_post.sel(sn=sn).data)
+    t_pre = np.datetime64(t_pre)
+    t_post = np.datetime64(t_post)
+    span_ns = (t_post - t_pre).astype("timedelta64[ns]").astype("float64")
+    if span_ns <= 0:
+        return None
+    elapsed_ns = (
+        (thermistor.time.values - t_pre)
+        .astype("timedelta64[ns]")
+        .astype("float64")
+    )
+    frac = np.clip(elapsed_ns / span_ns, 0.0, 1.0)
+    offset = o_pre + frac * (o_post - o_pre)
+    da_offset = xr.DataArray(
+        offset, coords={"time": thermistor.time}, dims=["time"]
+    )
+    return thermistor + da_offset
 
 
 def rbr_cut_and_cal(
@@ -908,110 +1006,183 @@ def rbr_cut_and_cal(
     return tmpcal
 
 
-def load_thermistors(proc_dir, time_span, sensor_info, exclude_sn=None):
-    if exclude_sn is not None:
-        if type(exclude_sn) is not list:
-            exclude_sn = [exclude_sn]
-        for sni in exclude_sn:
-            if sni in sensor_info.index:
-                sensor_info = sensor_info.drop(sni)
-    out = []
-    logger.info("reading sensors")
-    for sn, soloi in tqdm.tqdm_notebook(sensor_info.groupby("SN")):
-        # file = proc_dir.glob(f"*{sn:06}.nc")
-        # tmp = xr.open_dataarray(file.__next__())
-        tmp = rbr_load_proc_level1(sn, proc_dir)
-        t = tmp.sel(time=time_span).copy()
-        t.attrs["depth"] = soloi.depth.values[0]
-        t.attrs["height"] = soloi.height.values[0]
-        t.attrs["sn"] = sn
-        if len(t) > 0:
-            out.append(t)
-        tmp.close()
-    # # read RBR sensors
-    # solo = sensor_info.query('Type=="Solo" or Type=="Solo Ti" or Type=="MAVS Solo"')
-    # print("reading RBRs")
-    # for sn, soloi in tqdm(solo.groupby("SN")):
-    #     if proc_level == 0:
-    #         file = rbr_proc.glob(f"{sn:06}*.nc")
-    #     if proc_level > 0:
-    #         file = rbr_proc.glob(f"*{sn:06}.nc")
-    #     tmp = xr.open_dataarray(file.__next__())
-    #     t = tmp.sel(time=time_span).copy()
-    #     t.attrs["depth"] = soloi.depth.values[0]
-    #     t.attrs["height"] = soloi.height.values[0]
-    #     t.attrs["sn"] = sn
-    #     if len(t) > 0:
-    #         out.append(t)
-    #     tmp.close()
-    # # read SBE sensors
-    # sbe = sensor_info.query('Type=="SBE56"')
-    # print("reading SBEs")
-    # for sn, sbei in tqdm(sbe.groupby("SN")):
-    #     file = sbe_proc.glob(f"*{sn:04}*.nc")
-    #     tmp = xr.open_dataarray(file.__next__())
-    #     t = tmp.sel(time=time_span).copy()
-    #     t.attrs["depth"] = sbei.depth.values[0]
-    #     t.attrs["height"] = sbei.height.values[0]
-    #     t.attrs["sn"] = sn
-    #     if len(t) > 0:
-    #         out.append(t)
-    #     tmp.close()
-    return out
+def rbr_cut_and_cal_interp(
+    sn,
+    l0dir,
+    l1dir,
+    ctdcal_pre,
+    ctdcal_post,
+    t_pre,
+    t_post,
+    cut_beg,
+    cut_end,
+    end_manually,
+    mooring_name,
+    sensor_type,
+):
+    """Cut + apply linear pre→post CTD offset, with scalar fallback.
+
+    Mirrors :func:`rbr_cut_and_cal` for the cut-window logic (find last
+    time stamp, find first long gap, ``end_manually`` override). The
+    calibration step applies the two-point linear-in-time offset via
+    :func:`apply_interpolated_ctd_offset` when both calibrations exist;
+    otherwise falls back to a scalar :func:`rbr_apply_ctd_offset` using
+    whichever side is available.
+
+    Returns
+    -------
+    (xr.DataArray, str)
+        The saved L1 series and the calibration method used:
+        ``"linear_interp"`` (two-point applied), ``"scalar"`` (only one
+        side available), or ``"none"`` (no offset applied).
+    """
+    savename = (
+        f"{mooring_name.lower().replace(' ', '_')}__"
+        f"{sensor_type.lower()}__{sn:06}_L1.nc"
+    )
+    savepath = l1dir.joinpath(savename)
+    if savepath.exists():
+        logger.info(f"loading existing SN{sn} L1 data")
+        tmpcal = xr.open_dataarray(savepath)
+        return tmpcal, tmpcal.attrs.get("cal_method", "unknown")
+
+    logger.info(f"loading SN{sn} L0 data")
+    tmp = rbr_load_proc_level0(sn, l0dir)
+    attrs = tmp.attrs
+    last_time = rbr_find_last_time_stamp(tmp)
+    t1 = cut_end
+    if last_time < cut_end:
+        t1 = last_time
+    tdi = rbr_find_gaps(tmp)
+    if len(tdi) > 0:
+        t = rbr_find_first_long_gap(tdi)
+        if ~np.isnat(t):
+            if t.time.data < t1:
+                t1 = t.time.data
+            if sn in end_manually:
+                if end_manually[sn] < t1:
+                    t1 = end_manually[sn]
+
+    tmpcut = tmp.where((tmp.time > cut_beg) & (tmp.time < t1), drop=True)
+
+    if tmpcut.size == 0:
+        logger.warning(
+            f"SN{sn}: cut window contains no samples (likely corrupt L0 "
+            f"time series), skipping L1 write"
+        )
+        return None, "empty"
+
+    tmpcal = apply_interpolated_ctd_offset(
+        tmpcut, sn, ctdcal_pre, ctdcal_post, t_pre, t_post
+    )
+    if tmpcal is not None:
+        cal_method = "linear_interp"
+    else:
+        pre_ok = ctdcal_pre is not None and sn in ctdcal_pre.sn
+        post_ok = ctdcal_post is not None and sn in ctdcal_post.sn
+        if pre_ok:
+            tmpcal = rbr_apply_ctd_offset(tmpcut, sn, ctdcal_pre)
+            cal_method = "scalar"
+        elif post_ok:
+            tmpcal = rbr_apply_ctd_offset(tmpcut, sn, ctdcal_post)
+            cal_method = "scalar"
+        else:
+            tmpcal = tmpcut
+            cal_method = "none"
+
+    tmpcal.attrs = attrs
+    tmpcal.attrs["sample size"] = len(tmpcal)
+    tmpcal.attrs["cal_method"] = cal_method
+    logger.info(f"saving SN{sn} L1 data ({cal_method})")
+    tmpcal.to_netcdf(savepath, mode="w")
+
+    return tmpcal, cal_method
 
 
 def grid_thermistors(
     sensor_info,
     proc_dir,
-    start="2023-08-01",
-    end=None,
-    days=2,
-    extra_meta_data=None,
+    start,
+    end,
+    dt,
+    max_gap,
     exclude_sn=None,
+    extra_meta_data=None,
 ):
-    # construct time slice
+    """Load all sensors once and grid them to a common time vector
+    spanning `start`-`end`.
+
+    Each sensor's procl1 NetCDF is opened once and materialized into
+    memory. Native sample gaps wider than `max_gap` are masked as NaN
+    before interpolation so that linear interp does not bridge real
+    outages.
+
+    Parameters
+    ----------
+    sensor_info : pandas.DataFrame
+        Sensor metadata indexed by SN.
+    proc_dir : pathlib.Path
+        Directory holding procl1 NetCDF files (one per SN).
+    start, end : str or datetime-like
+        Time window to grid (inclusive start, exclusive end).
+    dt : np.timedelta64
+        Output time spacing.
+    max_gap : np.timedelta64
+        Source sample spacing above this is masked as NaN.
+    exclude_sn : list of int, optional
+        SNs to skip entirely.
+    extra_meta_data : dict, optional
+        Extra attributes attached to the returned DataArray.
+
+    Returns
+    -------
+    xr.DataArray
+        Gridded data with dims (depth, time). Sensors with no data in
+        the window are dropped; sensors with data on only part of the
+        window appear with NaN on the missing range.
+    """
+    if exclude_sn is not None:
+        if not isinstance(exclude_sn, list):
+            exclude_sn = [exclude_sn]
+        sensor_info = sensor_info.drop(
+            [sn for sn in exclude_sn if sn in sensor_info.index]
+        )
+
     start = np.datetime64(start)
-    if end is not None:
-        end = np.datetime(end)
-    elif days is not None:
-        end = start + np.timedelta64(days, "D")
-    time_span = slice(start, end)
-    out = load_thermistors(proc_dir, time_span, sensor_info, exclude_sn)
-    # def load_thermistors(proc_dir, time_span, sensor_info, exclude_sn=None):
-
-    depth = [ti.depth for ti in out]
-    height = [ti.height for ti in out]
-    sn = [ti.sn for ti in out]
-
-    # 1s time vector
-    tstart = np.datetime64(time_span.start)
-    tstop = np.datetime64(time_span.stop)
-    time = np.arange(tstart, tstop, dtype="datetime64[s]")
-    time = time.astype("datetime64[ns]")
+    end = np.datetime64(end)
+    time = np.arange(start, end, dt).astype("datetime64[ns]")
     time = xr.DataArray(time, coords=[time], dims=["time"])
 
-    # interpolate to time vector
-    out2 = [ti.interp_like(time) for ti in out]
+    out, depth, height, sn_list = [], [], [], []
+    logger.info("loading sensors")
+    for sn, soloi in tqdm.tqdm_notebook(sensor_info.groupby("SN")):
+        raw = rbr_load_proc_level1(sn, proc_dir)
+        if raw is None:
+            continue
+        da = raw.sel(time=slice(start, end)).load()
+        raw.close()
+        if da.time.size == 0:
+            continue
+        da = _insert_gap_nans(da, max_gap)
+        gridded = da.interp_like(time)
+        out.append(gridded)
+        depth.append(soloi.depth.values[0])
+        height.append(soloi.height.values[0])
+        sn_list.append(int(sn))
 
-    t = xr.concat(out2, dim="depth")
+    t = xr.concat(out, dim="depth")
     t.coords["depth"] = depth
-    t.coords["sn"] = (("depth"), sn)
+    t.coords["sn"] = (("depth"), sn_list)
     t = t.sortby("depth")
 
-    # clean up attributes
     t.attrs = {k: v for k, v in t.attrs.items() if k in ["units", "long_name"]}
     t.time.attrs["long_name"] = " "
-
-    # Add more attributes if provided
     if extra_meta_data is not None:
         for k, v in extra_meta_data.items():
             t.attrs[k] = v
 
-    # Add sensor type info to the data structure
-    sn = t.sn.data
-    sensor = [sensor_info.loc[sni].type for sni in sn]
-    t["sensor_type"] = (("depth"), sensor)
-
+    sensor_types = [sensor_info.loc[sni].type for sni in sn_list]
+    t["sensor_type"] = (("depth"), sensor_types)
     return t
 
 
