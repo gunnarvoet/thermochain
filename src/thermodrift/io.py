@@ -1349,6 +1349,7 @@ def offsets_from_background_fit(
     spline=False,
     spline_smooth=2e-4,
     exclude_sn=None,
+    weights=None,
 ):
     """Determine sensor offset from a stable time-mean background temperature profile.
 
@@ -1378,6 +1379,13 @@ def offsets_from_background_fit(
     exclude_sn : list, optional
         Exclude specific sensors (for example if no CTD cal available) with a
         list of serial numbers.
+    weights : array-like, optional
+        Per-sensor weights (length = ``t.depth.size``) forwarded to both the
+        spline (``UnivariateSpline(w=...)``) and the polynomial
+        (``np.polynomial.polynomial.polyfit(w=...)``) fits. Smaller weight
+        means the fit is allowed to deviate more from that sensor. Useful
+        for damping endpoint pull when the topmost / bottom-most sensors
+        sit off the interior trend.
 
     Returns
     -------
@@ -1404,12 +1412,25 @@ def offsets_from_background_fit(
     mt_sel = mt[xn]
     depth_sel = depth[xn]
 
-    spl = scipy.interpolate.UnivariateSpline(depth[xn], mt[xn])
+    if weights is None:
+        w_sel = None
+    else:
+        weights_arr = np.asarray(weights, dtype=float)
+        if weights_arr.shape != (depth.size,):
+            raise ValueError(
+                f"weights must be length t.depth.size={depth.size}; "
+                f"got shape {weights_arr.shape}"
+            )
+        if np.any(weights_arr < 0):
+            raise ValueError("weights must be non-negative")
+        w_sel = weights_arr[np.asarray(xn, dtype=bool)]
+
+    spl = scipy.interpolate.UnivariateSpline(depth[xn], mt[xn], w=w_sel)
     spl.set_smoothing_factor(spline_smooth)
     spline_fit = spl(depth)
     spline_offsets = mt - spline_fit
 
-    pf2 = np.polynomial.polynomial.polyfit(depth[xn], mt[xn], deg=polydeg)
+    pf2 = np.polynomial.polynomial.polyfit(depth[xn], mt[xn], deg=polydeg, w=w_sel)
     poly_fit = np.polynomial.polynomial.polyval(depth, pf2)
     poly_offsets = mt - poly_fit
 
