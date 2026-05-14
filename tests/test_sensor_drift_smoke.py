@@ -78,6 +78,36 @@ class TestSensorDriftSmoke:
         assert len(names) == 4
         assert all(n.startswith("motive_b_deep_L1_") for n in names)
 
+    def test_default_window_length_is_one_day(self, synthetic_l1_dir):
+        # synthetic_l1_dir spans 12 days at 1-min cadence; default
+        # window_length=1D should produce 12 uniform windows.
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            run_all=False,
+        )
+        assert sd.offsets_initial.sizes["window"] == 12
+
+    def test_window_length_two_days_straddles_files(self, synthetic_l1_dir):
+        # synthetic_l1_dir's 3-day files don't align with 2-day windows,
+        # so this also exercises the cross-file accumulation path.
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            window_length=np.timedelta64(2, "D"),
+            run_all=False,
+        )
+        assert sd.offsets_initial.sizes["window"] == 6
+
+    def test_window_length_rejects_non_positive(self, synthetic_l1_dir):
+        with pytest.raises(ValueError, match="window_length must be positive"):
+            sensor_drift(
+                mooring_name="synthetic",
+                l1_grid_dir=synthetic_l1_dir,
+                window_length=np.timedelta64(0, "D"),
+                run_all=False,
+            )
+
 
 class TestSensorDriftFitMode:
     """Mixed protection + target-behaviour — refactor step 5.2(d)."""

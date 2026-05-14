@@ -1590,12 +1590,21 @@ class sensor_drift:
         drift_parameters=None,
         first_n_chunks=None,
         file_pattern=None,
+        window_length=np.timedelta64(1, "D"),
     ):
         # self.mooring_id = mooring_id
         self.l1_grid_dir = l1_grid_dir
         self.mooring_name = mooring_name
         self.last_window = last_window
         self.file_pattern = file_pattern
+        # Window length for the background-fit segmentation; uniform across
+        # the deployment, aligned to the first sample of the first L1 file.
+        # See `windowed_background_fits`.
+        self.window_length = np.timedelta64(window_length)
+        if self.window_length <= np.timedelta64(0, "ns"):
+            raise ValueError(
+                f"window_length must be positive; got {self.window_length!r}"
+            )
         self.parse_drift_parameters(drift_parameters)
         self.print_drift_parameters()
         # generate a list of all level 1 processed files
@@ -1639,6 +1648,7 @@ class sensor_drift:
             "l1_grid_dir",
             "mooring_name",
             "last_window",
+            "window_length",
             "exclude",
             "polydeg",
             "outliers_polydeg",
@@ -1667,67 +1677,91 @@ class sensor_drift:
         self.files_gridded_level1 = all_gridded_files_l1
 
     def windowed_background_fits(self):
-        """This shows the offsets determined from background fits for all
-        windows. Outliers not removed yet."""
-        all_offs = []
-        all_time = []
-        time_window = []
-        # Iterate over all 2-day-gridded data files. Split up into one-day
-        # windows. We treat first and last file differently as we drop times
-        # without any data and treat the rest as one window.
-        for file in tqdm.tqdm_notebook(self.files_gridded_level1):
-            data_gridded = xr.open_dataarray(file)
-            data_gridded.close()
-            # First or last file.
-            if (
-                file == self.files_gridded_level1[0]
-                or file == self.files_gridded_level1[-1]
-            ):
-                tmp = data_gridded.dropna(dim="time", how="all")
-                offs = offsets_from_background_fit(
-                    tmp,
-                    exclude=self.exclude,
-                    plot=False,
-                    polydeg=self.polydeg,
-                    outliers_polydeg=self.outliers_polydeg,
-                    spline=self.use_spline,
-                    spline_smooth=self.spline_smooth,
-                    exclude_sn=self.exclude_sn,
-                )
-                all_offs.append(offs)
-                time_window.append(tmp.time.mean(dim="time"))
-            # All other files.
-            else:
-                days = data_gridded.time.dt.day
-                ud, ind = np.unique(days, return_index=True)
-                ud = days[
-                    np.sort(ind)
-                ]  # need this trick because unique() returns sorted...
-                for udi in ud:
-                    tmp = data_gridded.where(days == udi, drop=True)
-                    offs = offsets_from_background_fit(
-                        tmp,
-                        exclude=self.exclude,
-                        plot=False,
-                        polydeg=self.polydeg,
-                        outliers_polydeg=self.outliers_polydeg,
-                        spline=self.use_spline,
-                        spline_smooth=self.spline_smooth,
-                        exclude_sn=self.exclude_sn,
-                    )
-                    time_window.append(tmp.time.mean(dim="time"))
-                    all_offs.append(offs)
-            all_time.append(data_gridded.time)
+        """Background-fit one window at a time across the deployment.
 
-        time = xr.concat(all_time, dim="time")
+        Windows are uniform `self.window_length`-sized segments aligned to
+        the first sample of the first L1 file. A window's data is the union
+        of slices from every L1 file that overlaps it — so window boundaries
+        do not need to coincide with file boundaries. Each window yields one
+        offsets profile via `offsets_from_background_fit`; the result lands
+        in `self.offsets_initial` with dims `(window, depth)` and the
+        per-window mean timestamp in `self.time_window`.
+
+        Sets `self.offsets_initial` and `self.time_window`. Outliers not
+        removed yet — see `remove_outliers`.
+        """
+        wl_ns = self.window_length.astype("timedelta64[ns]").astype("int64")
+
+        # Peek the first file for deployment-start and the sn coordinate.
+        first = xr.open_dataarray(self.files_gridded_level1[0]).load()
+        first.close()
+        deployment_start = first.time.values[0]
+        sn_coord = first.sn.copy()
+        del first
+
+        all_offs = []
+        time_window_means = []
+        pending = {}  # window_idx -> list of materialised time slices
+
+        def _flush(w):
+            slices = pending.pop(w)
+            full = (
+                xr.concat(slices, dim="time").sortby("time")
+                if len(slices) > 1
+                else slices[0]
+            )
+            full = full.dropna(dim="time", how="all")
+            if full.time.size < self.polydeg + 1:
+                return
+            offs = offsets_from_background_fit(
+                full,
+                exclude=self.exclude,
+                plot=False,
+                polydeg=self.polydeg,
+                outliers_polydeg=self.outliers_polydeg,
+                spline=self.use_spline,
+                spline_smooth=self.spline_smooth,
+                exclude_sn=self.exclude_sn,
+            )
+            offs = offs.expand_dims(window=[w])
+            all_offs.append(offs)
+            time_window_means.append((w, full.time.mean(dim="time").data))
+
+        for file in tqdm.tqdm_notebook(self.files_gridded_level1):
+            data_gridded = xr.open_dataarray(file).load()
+            data_gridded.close()
+            elapsed_ns = (
+                (data_gridded.time.values - deployment_start)
+                .astype("timedelta64[ns]")
+                .astype("int64")
+            )
+            window_idx = elapsed_ns // wl_ns
+            this_file_windows = set(int(w) for w in np.unique(window_idx))
+
+            # Anything pending that doesn't appear in this file is complete
+            # (files are time-sorted, so no future file will contribute).
+            for w in sorted(set(pending) - this_file_windows):
+                _flush(w)
+
+            for w in sorted(this_file_windows):
+                slice_ = data_gridded.isel(time=(window_idx == w))
+                pending.setdefault(w, []).append(slice_)
+
+        # Final flush after the last file.
+        for w in sorted(pending):
+            _flush(w)
+
+        # Restore monotonic window ordering and renumber 0..N-1.
+        order = np.argsort([w for w, _ in time_window_means])
+        all_offs = [all_offs[i] for i in order]
+        time_window_means = [time_window_means[i] for i in order]
+
         off1 = xr.concat(all_offs, dim="window")
-        off1.coords["window"] = (("window"), np.arange(len(time_window)))
-        tmp = xr.open_dataarray(self.files_gridded_level1[0])
-        off1.coords["sn"] = tmp.sn
+        off1.coords["window"] = (("window"), np.arange(len(time_window_means)))
+        off1.coords["sn"] = sn_coord
         off1.name = "offsets"
-        tmp.close()
         self.offsets_initial = off1
-        self.time_window = [ti.data for ti in time_window]
+        self.time_window = [t for _, t in time_window_means]
 
     def remove_outliers(self, last_window=None):
         """Outliers in the offsets (anything outside +/-3 times standard
