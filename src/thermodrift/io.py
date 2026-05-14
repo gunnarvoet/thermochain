@@ -1589,11 +1589,13 @@ class sensor_drift:
         run_all=False,
         drift_parameters=None,
         first_n_chunks=None,
+        file_pattern=None,
     ):
         # self.mooring_id = mooring_id
         self.l1_grid_dir = l1_grid_dir
         self.mooring_name = mooring_name
         self.last_window = last_window
+        self.file_pattern = file_pattern
         self.parse_drift_parameters(drift_parameters)
         self.print_drift_parameters()
         # generate a list of all level 1 processed files
@@ -1657,7 +1659,8 @@ class sensor_drift:
         # gridded_path_l1 = config.data.gridded.thermistors.level1[
         #     f"mavs{self.mooring_id}"
         # ]
-        all_gridded_files_l1 = sorted(list(self.l1_grid_dir.glob("*.nc")))
+        pattern = self.file_pattern or "*.nc"
+        all_gridded_files_l1 = sorted(list(self.l1_grid_dir.glob(pattern)))
         all_gridded_files_l1 = _ignore_hidden_files(all_gridded_files_l1)
         if first_n_chunks is not None:
             all_gridded_files_l1 = all_gridded_files_l1[:first_n_chunks]

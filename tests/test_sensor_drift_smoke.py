@@ -64,6 +64,20 @@ class TestSensorDriftSmoke:
         assert sd.exclude_sn == [72100]
         assert 72100 in sd.offsets.sn.values
 
+    def test_file_pattern_filters_grid_dir(self, synthetic_l1_dir_mixed):
+        # Real MOTIVE_B grid dir holds both `motive_b_deep_L1_*.nc` and
+        # `motive_b_shallow_L1_*.nc`; sensor_drift must accept a glob to
+        # narrow the load to a single segment.
+        sd = sensor_drift(
+            mooring_name="motive_b",
+            l1_grid_dir=synthetic_l1_dir_mixed,
+            file_pattern="motive_b_deep_L1_*.nc",
+            run_all=False,
+        )
+        names = [p.name for p in sd.files_gridded_level1]
+        assert len(names) == 4
+        assert all(n.startswith("motive_b_deep_L1_") for n in names)
+
 
 class TestSensorDriftFitMode:
     """Mixed protection + target-behaviour — refactor step 5.2(d)."""
