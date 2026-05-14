@@ -2210,7 +2210,7 @@ def _fit_cvhg16_params(
     tau_bounds=(5.0, 180.0),
     beta_bounds=(1.0 / 3.0, 3.0),
     A_scan_factor=1.5,
-    A_scan_iters=40,
+    A_scan_iters=10,
 ):
     """Fit CvHG16 Eq. 5 to a 1-d offset series, returning the parameters.
 
@@ -2269,7 +2269,7 @@ def expfit_ufunc(
     tau_bounds=(5.0, 180.0),
     beta_bounds=(1.0 / 3.0, 3.0),
     A_scan_factor=1.5,
-    A_scan_iters=40,
+    A_scan_iters=10,
 ):
     """Fit CvHG16 Eq. 5 to a 1-d offset series.
 
