@@ -1153,8 +1153,17 @@ def grid_thermistors(
     time = np.arange(start, end, dt).astype("datetime64[ns]")
     time = xr.DataArray(time, coords=[time], dims=["time"])
 
-    out, depth, height, sn_list = [], [], [], []
+    # Pre-allocate the (depth, time) output and fill row-by-row instead
+    # of accumulating per-sensor DataArrays and concatenating at the end.
+    # `xr.concat` held inputs + merged output coexistent and doubled peak
+    # memory, which OOM'd the deep arrays at dt=2s.
+    n_max = len(sensor_info)
+    n_times = time.size
+    data = np.empty((n_max, n_times), dtype=np.float64)
+    depth, height, sn_list = [], [], []
+    sensor_attrs = None
     logger.info("loading sensors")
+    i = 0
     for sn, soloi in tqdm.tqdm_notebook(sensor_info.groupby("SN")):
         raw = rbr_load_proc_level1(sn, proc_dir)
         if raw is None:
@@ -1165,13 +1174,20 @@ def grid_thermistors(
             continue
         da = _insert_gap_nans(da, max_gap)
         gridded = da.interp_like(time)
-        out.append(gridded)
+        data[i, :] = gridded.values
+        if sensor_attrs is None:
+            sensor_attrs = dict(gridded.attrs)
         depth.append(soloi.depth.values[0])
         height.append(soloi.height.values[0])
         sn_list.append(int(sn))
+        i += 1
 
-    t = xr.concat(out, dim="depth")
-    t.coords["depth"] = depth
+    t = xr.DataArray(
+        data[:i],
+        dims=["depth", "time"],
+        coords={"time": time, "depth": np.asarray(depth)},
+        attrs=sensor_attrs or {},
+    )
     t.coords["sn"] = (("depth"), sn_list)
     t = t.sortby("depth")
 
