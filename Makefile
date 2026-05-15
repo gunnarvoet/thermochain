@@ -34,7 +34,7 @@ test: ## run tests
 
 docs: ## generate documentation using pdoc
 	rm -rf docs
-	pdoc --math -t .pdoc-theme-gv -d numpy -o docs thermodrift
+	uv run pdoc --math -t .pdoc-theme-gv -d numpy -o docs thermodrift
 	$(BROWSER) docs/index.html
 
 servedocs: ## compile the docs & watch for changes

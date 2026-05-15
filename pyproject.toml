@@ -80,4 +80,5 @@ mixsea = { git = "https://github.com/modscripps/mixsea", branch = "main" }
 dev = [
     "pytest>=9.0.2",
     "ruff>=0.15.1",
+    "pdoc>=15.0.0",
 ]
