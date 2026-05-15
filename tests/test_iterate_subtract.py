@@ -125,8 +125,16 @@ class TestManualOverride:
         assert target_sn in sd.flagged_outlier_sns
         assert sd.iteration_count == 1
         idx = int(np.where(sd.offsets.sn.values == target_sn)[0][0])
-        diff = sd.offsets.isel(depth=idx) - sd.offsets_pass1.isel(depth=idx)
-        assert float(np.abs(diff).max()) > 0
+        # After iteration, the outlier's offsets and drift_fit are
+        # restored to pass-1 (iteration only updates neighbours).
+        np.testing.assert_array_equal(
+            sd.offsets.isel(depth=idx).values,
+            sd.offsets_pass1.isel(depth=idx).values,
+        )
+        np.testing.assert_array_equal(
+            sd.drift_fit.isel(depth=idx).values,
+            sd.drift_fit_pass1.isel(depth=idx).values,
+        )
 
     def test_manual_sn_not_in_deployment_warns(self, synthetic_l1_dir):
         with pytest.warns(UserWarning, match="not in the deployment"):
@@ -150,10 +158,12 @@ class TestSyntheticLargeDriftImprovesNeighbours:
     def test_neighbours_improve_after_iteration(
         self, synthetic_l1_dir_with_drift
     ):
-        # The prescribed-drift sensor's own pass-1 fit is already good;
-        # what matters is the leakage onto its neighbours. We expect
-        # pass-2 amplitudes on the immediate neighbours to drop after
-        # the outlier's drift is subtracted from the offsets.
+        # Test the iteration mechanic in isolation by forcing exactly
+        # the prescribed sensor as the outlier (manual override, with
+        # auto-flag effectively disabled via a high threshold).
+        # The auto-flag heuristic itself is exercised by other tests;
+        # here the question is whether iteration improves the
+        # neighbours' fits when given a known outlier.
         l1_dir, drift_sn = synthetic_l1_dir_with_drift
         sd = sensor_drift(
             mooring_name="synthetic",
@@ -161,11 +171,12 @@ class TestSyntheticLargeDriftImprovesNeighbours:
             run_all=True,
             drift_parameters=dict(
                 iterate_subtract=True,
-                amplitude_threshold_mK=1.5,
+                amplitude_threshold_mK=999.0,
+                manual_outlier_sns=[drift_sn],
                 fit_mode="linear",
             ),
         )
-        assert drift_sn in sd.flagged_outlier_sns
+        assert sd.flagged_outlier_sns == [drift_sn]
         assert sd.iteration_count == 1
 
         sn_arr = sd.drift_fit.sn.values
@@ -179,6 +190,42 @@ class TestSyntheticLargeDriftImprovesNeighbours:
                 f"neighbour at depth {nb_idx}: pass-2 amplitude {amp_pass2:.3e} "
                 f"not less than pass-1 {amp_pass1:.3e}"
             )
+
+    def test_outlier_drift_fit_preserved_at_pass1(
+        self, synthetic_l1_dir_with_drift
+    ):
+        # The outlier's drift_fit must equal pass-1: pass-2 at the
+        # outlier is the residual after pass-1 was subtracted, which
+        # if saved would zero out the L2 correction for the very
+        # sensor we're trying to correct.
+        l1_dir, drift_sn = synthetic_l1_dir_with_drift
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=l1_dir,
+            run_all=True,
+            drift_parameters=dict(
+                iterate_subtract=True,
+                amplitude_threshold_mK=999.0,
+                manual_outlier_sns=[drift_sn],
+                fit_mode="linear",
+            ),
+        )
+        sn_arr = sd.drift_fit.sn.values
+        drift_idx = int(np.where(sn_arr == drift_sn)[0][0])
+        np.testing.assert_array_equal(
+            sd.drift_fit.isel(depth=drift_idx).values,
+            sd.drift_fit_pass1.isel(depth=drift_idx).values,
+        )
+        np.testing.assert_array_equal(
+            sd.drift_linfit.isel(depth=drift_idx).values,
+            sd.drift_linfit_pass1.isel(depth=drift_idx).values,
+        )
+        # Also: offsets and offsets_clean at outlier are restored so
+        # plot_drift_sensor_and_neighbors shows the original signal.
+        np.testing.assert_array_equal(
+            sd.offsets.isel(depth=drift_idx).values,
+            sd.offsets_pass1.isel(depth=drift_idx).values,
+        )
 
 
 class TestIdempotentWhenDisabled:

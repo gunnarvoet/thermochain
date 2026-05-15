@@ -2053,10 +2053,14 @@ class sensor_drift:
         Identifies outlier sensors from pass-1 ``drift_fit``, snapshots
         pass-1 state into ``*_pass1`` attrs, subtracts the flagged
         sensors' pass-1 fit from ``offsets``, and re-runs the
-        neighbour-stack stages once. When no sensors are flagged the
-        method returns immediately with ``iteration_count = 0`` and
-        ``flagged_outlier_sns = []`` so downstream consumers see a
-        stable schema either way.
+        neighbour-stack stages once. The iteration's purpose is to
+        clean up the neighbours' fits; the outlier's own fit is
+        restored to pass-1 after the rerun so the L2 correction at
+        the outlier matches what it would be without iteration.
+
+        When no sensors are flagged the method returns immediately
+        with ``iteration_count = 0`` and ``flagged_outlier_sns = []``
+        so downstream consumers see a stable schema either way.
         """
         sns = self._flag_drift_outliers()
         if not sns:
@@ -2064,15 +2068,54 @@ class sensor_drift:
             self.iteration_count = 0
             return
         self.offsets_pass1 = self.offsets.copy(deep=True)
-        self.drift_fit_pass1 = self.drift_fit.copy(deep=True)
         self.offsets_clean_pass1 = self.offsets_clean.copy(deep=True)
-        if hasattr(self, "fit_type"):
-            self.fit_type_pass1 = self.fit_type.copy(deep=True)
+        self.drift_fit_pass1 = self.drift_fit.copy(deep=True)
+        self.drift_linfit_pass1 = self.drift_linfit.copy(deep=True)
+        if hasattr(self, "drift_expfit"):
+            self.drift_expfit_pass1 = self.drift_expfit.copy(deep=True)
         if hasattr(self, "drift_exp_params"):
             self.drift_exp_params_pass1 = self.drift_exp_params.copy(deep=True)
+        if hasattr(self, "fit_type"):
+            self.fit_type_pass1 = self.fit_type.copy(deep=True)
         self.subtract_outlier_drift(sns)
         self._rerun_post_offsets()
+        self._restore_outlier_pass1()
         self.iteration_count = 1
+
+    def _restore_outlier_pass1(self):
+        """Replace pass-2 drift outputs at flagged outliers with their
+        pass-1 snapshots. Neighbours keep their (clean) pass-2 fits.
+
+        The pass-2 fit at an outlier is the fit of (offsets - pass-1
+        drift) — i.e., the residual leakage, not the actual drift.
+        Saving the residual would zero out the L2 correction at the
+        outlier, so we restore the pass-1 fit (which captured the
+        outlier's drift well, just at the cost of leaking onto its
+        neighbours; iteration solves the neighbour problem).
+        """
+        sns = self.flagged_outlier_sns
+        mask_sn = self.drift_fit.sn.isin(sns)
+        self.offsets = xr.where(mask_sn, self.offsets_pass1, self.offsets)
+        self.offsets_clean = xr.where(
+            mask_sn, self.offsets_clean_pass1, self.offsets_clean
+        )
+        self.drift_fit = xr.where(mask_sn, self.drift_fit_pass1, self.drift_fit)
+        self.drift_linfit = xr.where(
+            mask_sn, self.drift_linfit_pass1, self.drift_linfit
+        )
+        if hasattr(self, "drift_expfit_pass1"):
+            self.drift_expfit = xr.where(
+                mask_sn, self.drift_expfit_pass1, self.drift_expfit
+            )
+        if hasattr(self, "fit_type_pass1"):
+            self.fit_type = xr.where(
+                mask_sn, self.fit_type_pass1, self.fit_type
+            )
+        if hasattr(self, "drift_exp_params_pass1"):
+            mask_dp = self.drift_exp_params.sn.isin(sns)
+            self.drift_exp_params = xr.where(
+                mask_dp, self.drift_exp_params_pass1, self.drift_exp_params
+            )
 
     def drift_to_dataarray(self):
         """Note: the old version of this function lets you evaluate the fits to
@@ -2269,11 +2312,13 @@ class sensor_drift:
         fig.suptitle(title, color="red" if flagged else "black")
 
     def plot_iteration_diagnostic(self, zi):
-        """Two-panel before/after for a flagged sensor.
+        """Two-panel before/after for a sensor whose pass-1 fit was
+        contaminated by a neighbour's drift.
 
-        Top: pass-1 cleaned offsets and fit. Bottom: pass-2 cleaned
-        offsets and fit. Only meaningful when iteration ran and the sn
-        at depth index ``zi`` was flagged.
+        Top: pass-1 cleaned offsets and fit (contaminated). Bottom:
+        pass-2 cleaned offsets and fit (clean). Use on the neighbours
+        of a flagged outlier — the outlier itself is restored to its
+        pass-1 fit, so its before/after is identical and uninformative.
         """
         fig, (ax0, ax1) = plt.subplots(
             nrows=2,
@@ -2309,16 +2354,28 @@ class sensor_drift:
                 savename += "_" + suffix
             gv.plot.png(savename, figdir=figdir, verbose=False)
         if int(getattr(self, "iteration_count", 0)) > 0:
+            # Iteration only changes neighbours' fits (outliers are
+            # restored to pass-1); emit the before/after diagnostic for
+            # each neighbour of each flagged outlier so the cleanup is
+            # visible.
+            n_depth = self.offsets.sizes["depth"]
             for sn_flagged in getattr(self, "flagged_outlier_sns", []):
                 matches = np.where(self.offsets.sn.values == sn_flagged)[0]
                 if matches.size == 0:
                     continue
-                zi = int(matches[0])
-                self.plot_iteration_diagnostic(zi=zi)
-                savename = f"{self.mooring_name}_iteration_{sn_flagged}"
-                if suffix is not None:
-                    savename += "_" + suffix
-                gv.plot.png(savename, figdir=figdir, verbose=False)
+                outlier_idx = int(matches[0])
+                for nb_idx in (outlier_idx - 1, outlier_idx + 1):
+                    if nb_idx < 0 or nb_idx >= n_depth:
+                        continue
+                    nb_sn = int(self.offsets.sn.isel(depth=nb_idx).data)
+                    self.plot_iteration_diagnostic(zi=nb_idx)
+                    savename = (
+                        f"{self.mooring_name}_iteration"
+                        f"_outlier{sn_flagged}_nb{nb_sn}"
+                    )
+                    if suffix is not None:
+                        savename += "_" + suffix
+                    gv.plot.png(savename, figdir=figdir, verbose=False)
             plt.close()
 
 
