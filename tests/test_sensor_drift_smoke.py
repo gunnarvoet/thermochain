@@ -30,11 +30,18 @@ def _plain_tqdm(monkeypatch):
 
 
 class TestSensorDriftSmoke:
-    def test_constructs_and_runs_full_pipeline(self, synthetic_l1_dir):
+    @pytest.mark.parametrize("iterate_subtract", [False, True])
+    def test_constructs_and_runs_full_pipeline(
+        self, synthetic_l1_dir, iterate_subtract
+    ):
         sd = sensor_drift(
             mooring_name="synthetic",
             l1_grid_dir=synthetic_l1_dir,
             run_all=True,
+            drift_parameters=dict(
+                iterate_subtract=iterate_subtract,
+                amplitude_threshold_mK=50.0,
+            ),
         )
         # Step-by-step state is populated.
         assert hasattr(sd, "offsets_initial")

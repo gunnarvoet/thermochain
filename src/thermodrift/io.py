@@ -7,6 +7,7 @@ Generate a processing object with `ProcessThermistorMooring`.
 """
 
 import functools
+import warnings
 from pathlib import Path
 import tqdm
 import yaml
@@ -1639,6 +1640,8 @@ class sensor_drift:
             self.calc_second_guess_shared_fluctuating_component()
             self.calc_cleaned_offsets()
             self.fit_cleaned_offsets()
+            if self.iterate_subtract:
+                self.iterate_drift_subtraction()
 
     def parse_drift_parameters(self, drift_parameters):
         drift_defaults = dict(
@@ -1652,6 +1655,9 @@ class sensor_drift:
             tau_bounds=(5.0, 180.0),
             beta_bounds=(1.0 / 3.0, 3.0),
             fit_mode="auto",
+            iterate_subtract=False,
+            amplitude_threshold_mK=1.5,
+            manual_outlier_sns=[],
         )
         for key, value in drift_defaults.items():
             setattr(self, key, value)
@@ -1680,6 +1686,9 @@ class sensor_drift:
             "tau0",
             "tau_bounds",
             "beta_bounds",
+            "iterate_subtract",
+            "amplitude_threshold_mK",
+            "manual_outlier_sns",
         ]
         for key in parameter_list:
             print(key, ":", getattr(self, key))
@@ -1984,6 +1993,87 @@ class sensor_drift:
         fit = xr.where(fit_type == "exp", expfit, linfit)
         return fit, fit_type
 
+    def _flag_drift_outliers(self):
+        """Pick sensors whose pass-1 drift_fit amplitude exceeds the
+        configured threshold, plus any caller-supplied manual sns.
+
+        Manual sns not present in the deployment are skipped with a
+        UserWarning so a leftover entry in the YAML doesn't crash the
+        pipeline.
+        """
+        amp_mK = (
+            self.drift_fit.max(dim="window") - self.drift_fit.min(dim="window")
+        ) * 1000.0
+        auto = self.drift_fit.sn.where(
+            amp_mK > self.amplitude_threshold_mK, drop=True
+        )
+        auto_sns = [int(x) for x in auto.values]
+
+        deployment_sns = {int(x) for x in self.drift_fit.sn.values}
+        manual_sns = []
+        for sn in (self.manual_outlier_sns or []):
+            if int(sn) in deployment_sns:
+                manual_sns.append(int(sn))
+            else:
+                warnings.warn(
+                    f"manual_outlier_sns contains {sn} which is not in the "
+                    "deployment; skipping",
+                    stacklevel=2,
+                )
+        return sorted(set(auto_sns) | set(manual_sns))
+
+    def subtract_outlier_drift(self, sns):
+        """Replace ``self.offsets`` with pass-1 offsets minus pass-1
+        ``drift_fit`` at flagged sensors. Other sensors are unchanged.
+
+        Requires ``self.offsets_pass1`` and ``self.drift_fit_pass1`` to
+        be set (snapshotted by ``iterate_drift_subtraction``).
+        """
+        new_offsets = self.offsets_pass1.copy(deep=True)
+        mask_sn = new_offsets.sn.isin(list(sns))
+        correction = xr.where(mask_sn, self.drift_fit_pass1, 0.0)
+        self.offsets = new_offsets - correction
+        self.flagged_outlier_sns = sorted(int(s) for s in sns)
+
+    def _rerun_post_offsets(self):
+        """Re-run the six neighbour-stack stages on the (possibly
+        modified) ``self.offsets``. Each method overwrites its outputs
+        in place.
+        """
+        self.calc_first_guess_shared_fluctuating_component()
+        self.calc_offsets_second_guess()
+        self.fit_second_guess()
+        self.calc_second_guess_shared_fluctuating_component()
+        self.calc_cleaned_offsets()
+        self.fit_cleaned_offsets()
+
+    def iterate_drift_subtraction(self):
+        """One-pass iterative subtraction.
+
+        Identifies outlier sensors from pass-1 ``drift_fit``, snapshots
+        pass-1 state into ``*_pass1`` attrs, subtracts the flagged
+        sensors' pass-1 fit from ``offsets``, and re-runs the
+        neighbour-stack stages once. When no sensors are flagged the
+        method returns immediately with ``iteration_count = 0`` and
+        ``flagged_outlier_sns = []`` so downstream consumers see a
+        stable schema either way.
+        """
+        sns = self._flag_drift_outliers()
+        if not sns:
+            self.flagged_outlier_sns = []
+            self.iteration_count = 0
+            return
+        self.offsets_pass1 = self.offsets.copy(deep=True)
+        self.drift_fit_pass1 = self.drift_fit.copy(deep=True)
+        self.offsets_clean_pass1 = self.offsets_clean.copy(deep=True)
+        if hasattr(self, "fit_type"):
+            self.fit_type_pass1 = self.fit_type.copy(deep=True)
+        if hasattr(self, "drift_exp_params"):
+            self.drift_exp_params_pass1 = self.drift_exp_params.copy(deep=True)
+        self.subtract_outlier_drift(sns)
+        self._rerun_post_offsets()
+        self.iteration_count = 1
+
     def drift_to_dataarray(self):
         """Note: the old version of this function lets you evaluate the fits to
         the actual length of the time series. Bypassing this for now as we are
@@ -1993,6 +2083,10 @@ class sensor_drift:
         out = self.drift_fit.copy()
         out.name = f"{self.mooring_name} sensor drift"
         out.coords["time"] = (["window"], np.array(self.time_window))
+        out.attrs["iteration_count"] = int(getattr(self, "iteration_count", 0))
+        out.attrs["flagged_outlier_sns"] = np.asarray(
+            getattr(self, "flagged_outlier_sns", []), dtype="int64"
+        )
         self.drift = out
 
     def drift_to_netcdf(self, path, suffix=None):
@@ -2158,9 +2252,51 @@ class sensor_drift:
             )
         ax1.grid()
         ax1.set(title="")
-        fig.suptitle(
-            f"SN {self.offsets.sn.isel(depth=zi).data} @ {self.offsets.depth.isel(depth=zi).data:3.1f}m"
+        sn_int = int(self.offsets.sn.isel(depth=zi).data)
+        flagged = sn_int in getattr(self, "flagged_outlier_sns", [])
+        if int(getattr(self, "iteration_count", 0)) > 0 and hasattr(
+            self, "drift_fit_pass1"
+        ):
+            self.drift_fit_pass1.isel(depth=zi).plot(
+                color="0.5", linestyle=":", linewidth=1.0, ax=ax1
+            )
+        title = (
+            f"SN {sn_int} @ "
+            f"{float(self.offsets.depth.isel(depth=zi).data):3.1f}m"
         )
+        if flagged:
+            title += " — FLAGGED"
+        fig.suptitle(title, color="red" if flagged else "black")
+
+    def plot_iteration_diagnostic(self, zi):
+        """Two-panel before/after for a flagged sensor.
+
+        Top: pass-1 cleaned offsets and fit. Bottom: pass-2 cleaned
+        offsets and fit. Only meaningful when iteration ran and the sn
+        at depth index ``zi`` was flagged.
+        """
+        fig, (ax0, ax1) = plt.subplots(
+            nrows=2,
+            ncols=1,
+            figsize=(7.5, 6),
+            constrained_layout=True,
+            sharex=True,
+        )
+        sn = int(self.offsets.sn.isel(depth=zi).data)
+        depth_m = float(self.offsets.depth.isel(depth=zi).data)
+        self.offsets_clean_pass1.isel(depth=zi).plot(
+            linestyle="", marker="o", color="k", ax=ax0
+        )
+        self.drift_fit_pass1.isel(depth=zi).plot(color="r", linestyle="-", ax=ax0)
+        ax0.grid()
+        ax0.set(xlabel="", title="pass 1 (before neighbour subtraction)")
+        self.offsets_clean.isel(depth=zi).plot(
+            linestyle="", marker="o", color="k", ax=ax1
+        )
+        self.drift_fit.isel(depth=zi).plot(color="r", linestyle="-", ax=ax1)
+        ax1.grid()
+        ax1.set(title="pass 2 (after neighbour subtraction)")
+        fig.suptitle(f"SN {sn} @ {depth_m:3.1f}m — iteration diagnostic")
 
     def plot_drift_all_sensors(self, figdir, suffix=None):
         n = len(self.offsets.sn)
@@ -2172,6 +2308,17 @@ class sensor_drift:
             if suffix is not None:
                 savename += "_" + suffix
             gv.plot.png(savename, figdir=figdir, verbose=False)
+        if int(getattr(self, "iteration_count", 0)) > 0:
+            for sn_flagged in getattr(self, "flagged_outlier_sns", []):
+                matches = np.where(self.offsets.sn.values == sn_flagged)[0]
+                if matches.size == 0:
+                    continue
+                zi = int(matches[0])
+                self.plot_iteration_diagnostic(zi=zi)
+                savename = f"{self.mooring_name}_iteration_{sn_flagged}"
+                if suffix is not None:
+                    savename += "_" + suffix
+                gv.plot.png(savename, figdir=figdir, verbose=False)
             plt.close()
 
 
