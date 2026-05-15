@@ -38,3 +38,7 @@ pip-log.txt
 
 # pdm
 .pdm-python
+
+# Generated pdoc output and local planning notes
+docs/
+plans/
