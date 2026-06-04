@@ -8,11 +8,14 @@ the pass-1 drift on flagged outliers, subtracts it from `offsets`, and
 re-runs the neighbour-stack stages once.
 """
 
+import pathlib
+
 import numpy as np
 import pytest
 import tqdm
 import xarray as xr
 
+from _synthetic import write_drift_l1_files
 from thermodrift.io import sensor_drift
 
 
@@ -34,56 +37,39 @@ def synthetic_l1_dir_with_drift(tmp_path):
     against the prescribed sensor without re-deriving its serial.
 
     Drift amplitude ~5 mK over a 12-day deployment, matching the
-    MOTIVE A 236127 case that motivated this feature.
+    MOTIVE A 236127 case that motivated this feature. The dataset
+    builder lives in ``_synthetic.write_drift_l1_files`` so the pinned
+    restore-mode baseline is generated from the same data.
     """
-    n_depth = 12
-    sn = np.array([72100 + i for i in range(n_depth)])
-    depth = np.linspace(1000.0, 1200.0, n_depth)
-    t_mean = 4.0 + 6.0 * np.exp(-(depth - 1000.0) / 200.0)
-    drift_index = 6
-    drift_total_C = 5e-3
-
-    t_start = np.datetime64("2024-01-01T00:00")
-    t_end = np.datetime64("2024-01-13T00:00")
-    deployment_seconds = float((t_end - t_start) / np.timedelta64(1, "s"))
-
-    def _build_file(day_start, day_end):
-        rng = np.random.default_rng(int(day_start))
-        times = np.arange(
-            np.datetime64(f"2024-01-{day_start:02d}T00:00"),
-            np.datetime64(f"2024-01-{day_end:02d}T00:00"),
-            np.timedelta64(1, "m"),
-        )
-        arr = (
-            t_mean[None, :]
-            + 0.02 * rng.standard_normal((times.size, sn.size))
-        )
-        elapsed_s = (times - t_start) / np.timedelta64(1, "s")
-        drift = drift_total_C * (elapsed_s.astype(float) / deployment_seconds)
-        arr[:, drift_index] += drift
-        return xr.DataArray(
-            arr,
-            dims=("time", "depth"),
-            coords={
-                "time": times,
-                "depth": ("depth", depth),
-                "sn": ("depth", sn),
-            },
-            name="t",
-        )
-
-    spans = [(1, 4), (4, 7), (7, 10), (10, 13)]
-    for start, end in spans:
-        path = (
-            tmp_path
-            / f"mavs0_gridded_2024-01-{start:02d}_to_2024-01-{end:02d}.nc"
-        )
-        _build_file(start, end).to_netcdf(path)
-    return tmp_path, int(sn[drift_index])
+    drift_sn = write_drift_l1_files(tmp_path)
+    return tmp_path, drift_sn
 
 
 def _amp(da):
     return float(da.max("window") - da.min("window"))
+
+
+# Restore-mode drift_fit pinned from the pre-`iterate_mode` code on the
+# `synthetic_l1_dir_with_drift` dataset; guards the default path against
+# behavioural drift. Regenerate only with deliberate intent.
+BASELINE = pathlib.Path(__file__).parent / "data" / "iterate_restore_baseline.nc"
+
+
+def _run_iter(l1_dir, drift_sn, mode):
+    """Run sensor_drift with iterate_subtract on, forcing `drift_sn` as the
+    sole flagged outlier, under the given iterate_mode."""
+    return sensor_drift(
+        mooring_name="synthetic",
+        l1_grid_dir=l1_dir,
+        run_all=True,
+        drift_parameters=dict(
+            iterate_subtract=True,
+            amplitude_threshold_mK=999.0,
+            manual_outlier_sns=[drift_sn],
+            fit_mode="linear",
+            iterate_mode=mode,
+        ),
+    )
 
 
 class TestNoFlag:
@@ -295,3 +281,92 @@ class TestOutputAttrs:
         flagged = np.asarray(reloaded.attrs["flagged_outlier_sns"])
         assert flagged.size >= 1
         assert flagged.dtype.kind == "i"
+
+
+class TestIterateModeValidation:
+    def test_invalid_mode_raises(self, synthetic_l1_dir):
+        with pytest.raises(ValueError, match="iterate_mode"):
+            sensor_drift(
+                mooring_name="synthetic",
+                l1_grid_dir=synthetic_l1_dir,
+                run_all=True,
+                drift_parameters=dict(
+                    iterate_subtract=True,
+                    fit_mode="linear",
+                    iterate_mode="nope",
+                ),
+            )
+
+    def test_default_mode_is_restore(self, synthetic_l1_dir):
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            run_all=True,
+            drift_parameters=dict(iterate_subtract=True, fit_mode="linear"),
+        )
+        assert sd.iterate_mode == "restore"
+
+
+class TestRestoreBackwardCompat:
+    def test_restore_matches_pinned_baseline(self, synthetic_l1_dir_with_drift):
+        # Default-path guard: restore-mode drift_fit must reproduce the
+        # baseline captured from the pre-iterate_mode implementation.
+        l1_dir, drift_sn = synthetic_l1_dir_with_drift
+        sd = _run_iter(l1_dir, drift_sn, "restore")
+        baseline = xr.open_dataarray(BASELINE)
+        xr.testing.assert_allclose(sd.drift_fit, baseline)
+
+
+class TestRefitMode:
+    def test_refit_changes_flagged_sensor_only(self, synthetic_l1_dir_with_drift):
+        l1_dir, drift_sn = synthetic_l1_dir_with_drift
+        restore = _run_iter(l1_dir, drift_sn, "restore")
+        refit = _run_iter(l1_dir, drift_sn, "refit")
+        sn_arr = refit.drift_fit.sn.values
+        flag_idx = int(np.where(sn_arr == drift_sn)[0][0])
+        # The flagged sensor's drift differs between the two modes.
+        assert not np.allclose(
+            refit.drift_fit.isel(depth=flag_idx).values,
+            restore.drift_fit.isel(depth=flag_idx).values,
+        )
+        # Every non-flagged sensor is bitwise identical: their offsets_clean
+        # is untouched, so re-fitting yields the same pass-2 drift.
+        for di in range(len(sn_arr)):
+            if di == flag_idx:
+                continue
+            np.testing.assert_array_equal(
+                refit.drift_fit.isel(depth=di).values,
+                restore.drift_fit.isel(depth=di).values,
+            )
+
+    def test_refit_recovers_more_drift_at_flagged(
+        self, synthetic_l1_dir_with_drift
+    ):
+        # Load-bearing design test. In restore mode the flagged sensor's own
+        # drift contaminates the shared component it is differenced against,
+        # so pass-1 under-recovers the planted ramp. refit recomputes the
+        # cleaned offsets against the *pass-2* shared component (computed
+        # after the drift was subtracted), recovering a larger fraction of
+        # the true drift amplitude.
+        l1_dir, drift_sn = synthetic_l1_dir_with_drift
+        restore = _run_iter(l1_dir, drift_sn, "restore")
+        refit = _run_iter(l1_dir, drift_sn, "refit")
+        flag_idx = int(np.where(refit.drift_fit.sn.values == drift_sn)[0][0])
+        amp_restore = _amp(restore.drift_fit.isel(depth=flag_idx))
+        amp_refit = _amp(refit.drift_fit.isel(depth=flag_idx))
+        assert amp_refit > amp_restore
+
+    def test_refit_no_op_when_nothing_flagged(self, synthetic_l1_dir):
+        sd = sensor_drift(
+            mooring_name="synthetic",
+            l1_grid_dir=synthetic_l1_dir,
+            run_all=True,
+            drift_parameters=dict(
+                iterate_subtract=True,
+                amplitude_threshold_mK=50.0,
+                fit_mode="linear",
+                iterate_mode="refit",
+            ),
+        )
+        assert sd.flagged_outlier_sns == []
+        assert sd.iteration_count == 0

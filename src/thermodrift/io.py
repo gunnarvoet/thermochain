@@ -1656,6 +1656,7 @@ class sensor_drift:
             beta_bounds=(1.0 / 3.0, 3.0),
             fit_mode="auto",
             iterate_subtract=False,
+            iterate_mode="restore",
             amplitude_threshold_mK=1.5,
             manual_outlier_sns=[],
         )
@@ -1668,6 +1669,10 @@ class sensor_drift:
         if self.fit_mode not in ("linear", "auto", "exp"):
             raise ValueError(
                 f"fit_mode must be 'linear', 'auto', or 'exp'; got {self.fit_mode!r}"
+            )
+        if self.iterate_mode not in ("restore", "refit"):
+            raise ValueError(
+                f"iterate_mode must be 'restore' or 'refit'; got {self.iterate_mode!r}"
             )
 
     def print_drift_parameters(self):
@@ -1687,6 +1692,7 @@ class sensor_drift:
             "tau_bounds",
             "beta_bounds",
             "iterate_subtract",
+            "iterate_mode",
             "amplitude_threshold_mK",
             "manual_outlier_sns",
         ]
@@ -2053,10 +2059,21 @@ class sensor_drift:
         Identifies outlier sensors from pass-1 ``drift_fit``, snapshots
         pass-1 state into ``*_pass1`` attrs, subtracts the flagged
         sensors' pass-1 fit from ``offsets``, and re-runs the
-        neighbour-stack stages once. The iteration's purpose is to
-        clean up the neighbours' fits; the outlier's own fit is
-        restored to pass-1 after the rerun so the L2 correction at
-        the outlier matches what it would be without iteration.
+        neighbour-stack stages once. The iteration always cleans up the
+        neighbours' fits; what happens to the *outlier's own* fit is set
+        by ``iterate_mode``:
+
+        - ``"restore"`` *(default)* — the flagged sensors' drift is
+          restored to its pass-1 value (``_restore_outlier_pass1``), so
+          the L2 correction at the outlier matches what it would be
+          without iteration. Pass-1 is biased by the outlier's own drift
+          leaking into the shared fluctuating component, but it captures
+          the drift amplitude.
+        - ``"refit"`` — the flagged sensors' drift is re-fit against the
+          *pass-2* shared fluctuating component (``_refit_outliers_pass2``),
+          which is computed after the outlier's drift was subtracted and
+          is therefore free of that self-bias. Prefer this when the
+          residual bias at the outlier matters.
 
         When no sensors are flagged the method returns immediately
         with ``iteration_count = 0`` and ``flagged_outlier_sns = []``
@@ -2079,7 +2096,10 @@ class sensor_drift:
             self.fit_type_pass1 = self.fit_type.copy(deep=True)
         self.subtract_outlier_drift(sns)
         self._rerun_post_offsets()
-        self._restore_outlier_pass1()
+        if self.iterate_mode == "refit":
+            self._refit_outliers_pass2()
+        else:  # "restore" — default, preserves the original behaviour
+            self._restore_outlier_pass1()
         self.iteration_count = 1
 
     def _restore_outlier_pass1(self):
@@ -2116,6 +2136,43 @@ class sensor_drift:
             self.drift_exp_params = xr.where(
                 mask_dp, self.drift_exp_params_pass1, self.drift_exp_params
             )
+
+    def _refit_outliers_pass2(self):
+        """Re-fit drift at flagged outliers using the *pass-2* shared
+        fluctuating component applied to their *original* (pass-1)
+        offsets. Replaces the blanket pass-1 restore in
+        ``iterate_mode='refit'``.
+
+        The pass-1 fit at an outlier is biased because the shared
+        fluctuating component at that depth was estimated from a triplet
+        that still contained the outlier's own drift. After
+        ``subtract_outlier_drift`` + ``_rerun_post_offsets``,
+        ``self.second_guess_shared_fluct_comp`` at the flagged depth is
+        computed from a triplet whose flagged member has its drift
+        removed, so it reflects the cleaner depth-coherent signal from
+        the neighbours. Subtracting that from the *original* offsets and
+        re-fitting recovers the outlier's drift without the self-bias.
+
+        Neighbours' pass-2 outputs are preserved by construction: their
+        ``offsets_clean`` is unchanged, and ``fit_cleaned_offsets`` is
+        deterministic, so re-running it leaves their drift bitwise
+        identical. Only the flagged sensors' drift outputs change.
+        """
+        sns = self.flagged_outlier_sns
+        if not sns:
+            return
+        mask_sn = self.offsets_clean.sn.isin(sns)
+        # Restore offsets at flagged sensors to pass-1 (subtract_outlier_drift
+        # had zeroed the drift there; downstream needs the original signal).
+        self.offsets = xr.where(mask_sn, self.offsets_pass1, self.offsets)
+        # Proper pass-2 cleaned offsets at flagged sensors: original offsets
+        # minus the (now clean) pass-2 shared fluctuating component.
+        proper_cleaned = self.offsets_pass1 - self.second_guess_shared_fluct_comp
+        self.offsets_clean = xr.where(mask_sn, proper_cleaned, self.offsets_clean)
+        # Re-fit across all sensors. Neighbours' offsets_clean is unchanged so
+        # their outputs are bitwise-identical; only flagged sensors get the
+        # new proper pass-2 drift.
+        self.fit_cleaned_offsets()
 
     def drift_to_dataarray(self):
         """Note: the old version of this function lets you evaluate the fits to
