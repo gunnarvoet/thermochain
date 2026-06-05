@@ -366,3 +366,61 @@ def test_drift_provenance_attrs_are_netcdf_safe():
     # no value is a tuple / bool / None (round-trips through to_netcdf)
     for v in attrs.values():
         assert not isinstance(v, (tuple, bool, type(None)))
+
+
+import types  # noqa: E402
+
+from thermodrift.pipeline import drift_diag_bundle  # noqa: E402
+
+
+def _fake_sd(with_exp):
+    """Minimal stand-in for a fitted sensor_drift (only the attrs the bundle reads)."""
+    depth = [4300.0, 4296.0, 4292.0]
+    window = [0, 1, 2]
+    arr = lambda v: xr.DataArray(  # noqa: E731
+        np.full((len(depth), len(window)), v),
+        dims=("depth", "window"),
+        coords={"depth": depth, "window": window},
+    )
+    sd = types.SimpleNamespace(
+        offsets_clean=arr(0.0),
+        drift_linfit=arr(1.0),
+        drift_fit=arr(2.0),
+        fit_type=xr.DataArray(["linear"] * len(depth), dims="depth", coords={"depth": depth}),
+        fit_mode="auto" if with_exp else "linear",
+        tau_bounds=(5.0, 180.0),
+        iteration_count=1,
+        flagged_outlier_sns=[236109, 236127],
+        drift_fit_pass1=arr(3.0),
+        offsets_clean_pass1=arr(4.0),
+    )
+    if with_exp:
+        sd.drift_expfit = arr(5.0)
+        sd.drift_exp_params = xr.DataArray(
+            np.zeros((len(depth), 2)), dims=("depth", "param"),
+            coords={"depth": depth, "param": ["tau", "beta"]},
+        )
+    return sd
+
+
+def test_drift_diag_bundle_linear_has_no_exp_vars():
+    dp = DriftParameters.from_dict({"fit_mode": "linear"})
+    bundle = drift_diag_bundle(_fake_sd(with_exp=False), dp, label="spline_lin")
+    assert set(bundle.data_vars) >= {
+        "offsets_clean", "drift_linfit", "drift_fit", "fit_type",
+        "drift_fit_pass1", "offsets_clean_pass1",
+    }
+    assert "drift_expfit" not in bundle.data_vars
+    assert bundle.attrs["fit_mode"] == "linear"
+    assert bundle.attrs["drift_label"] == "spline_lin"
+    assert bundle.attrs["drift_param_fit_mode"] == "linear"
+
+
+def test_drift_diag_bundle_auto_includes_exp_vars():
+    dp = DriftParameters.from_dict({"fit_mode": "auto", "tau0": 20.0, "tau_bounds": (5.0, 180.0)})
+    bundle = drift_diag_bundle(_fake_sd(with_exp=True), dp, label="spline_slowtau")
+    assert "drift_expfit" in bundle.data_vars
+    assert "drift_exp_params" in bundle.data_vars
+    assert bundle.attrs["tau_bounds_lo"] == 5.0
+    assert bundle.attrs["tau_bounds_hi"] == 180.0
+    np.testing.assert_array_equal(bundle.attrs["flagged_outlier_sns"], np.array([236109, 236127]))

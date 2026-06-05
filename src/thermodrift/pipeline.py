@@ -237,6 +237,52 @@ def drift_provenance_attrs(params, label):
     return attrs
 
 
+def drift_diag_bundle(sd, params, label):
+    """Assemble the drift diagnostic Dataset from a fitted ``sensor_drift``.
+
+    Port of MOTIVE notebook 05a's ``_run_config`` bundle block: gathers the
+    arrays the drift-comparison diagnostics need (``offsets_clean``,
+    ``drift_linfit``, ``drift_fit``, ``fit_type``, and — for auto/exp runs —
+    ``drift_expfit`` / ``drift_exp_params``, plus the iterate-subtract
+    ``*_pass1`` arrays when present), and writes the sd-derived diagnostic
+    attrs (matching the baseline) plus :func:`drift_provenance_attrs`.
+
+    Parameters
+    ----------
+    sd : thermodrift.io.sensor_drift
+        A fitted instance (``run_all=True`` already executed).
+    params : DriftParameters
+        Validated parameters for the provenance attrs.
+    label : str
+        Drift-product label.
+
+    Returns
+    -------
+    xr.Dataset
+    """
+    bundle = xr.Dataset(
+        {
+            "offsets_clean": sd.offsets_clean,
+            "drift_linfit": sd.drift_linfit,
+            "drift_fit": sd.drift_fit,
+            "fit_type": sd.fit_type,
+        }
+    )
+    for opt in ("drift_expfit", "drift_exp_params", "drift_fit_pass1", "offsets_clean_pass1"):
+        if hasattr(sd, opt):
+            bundle[opt] = getattr(sd, opt)
+    # sd-derived diagnostic attrs (match the baseline diag bundle)
+    bundle.attrs["fit_mode"] = sd.fit_mode
+    bundle.attrs["tau_bounds_lo"] = float(sd.tau_bounds[0])
+    bundle.attrs["tau_bounds_hi"] = float(sd.tau_bounds[1])
+    bundle.attrs["iteration_count"] = int(getattr(sd, "iteration_count", 0))
+    bundle.attrs["flagged_outlier_sns"] = np.asarray(
+        getattr(sd, "flagged_outlier_sns", []), dtype="int64"
+    )
+    bundle.attrs.update(drift_provenance_attrs(params, label))
+    return bundle
+
+
 def parse_gridding(block, defaults=None):
     """Validate a gridding block and convert dt/max_gap/chunk to np.timedelta64.
 
