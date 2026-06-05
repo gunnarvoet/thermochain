@@ -679,8 +679,9 @@ class Mooring(ProcessThermistorMooring):
         (e.g. ``cal_ignore_sns_pre``) excludes listed SNs even when a valid pool
         file exists — parallel to the notebooks' ``pre_cal_ignore_sns`` /
         ``post_cal_ignore_sns``. Pool files that are unreadable (e.g. no data
-        variables) or empty (zero-length time) are skipped with a warning rather
-        than raising, so a degenerate file does not abort the full source.
+        variables), empty (zero-length time), or have no samples within the
+        cast period are skipped with a warning rather than raising, so a
+        degenerate or non-overlapping file does not abort the full source.
 
         Parameters
         ----------
@@ -752,7 +753,14 @@ class Mooring(ProcessThermistorMooring):
                             f"{source} SN{sn:06d}: empty pool file {files[0].name}; skipping"
                         )
                         continue
-                    cals.append(da.sel(time=cast_period))
+                    sliced = da.sel(time=cast_period)
+                    if sliced.sizes.get("time", 0) == 0:
+                        da.close()
+                        logger.warning(
+                            f"{source} SN{sn:06d}: pool file {files[0].name} has no samples in cast period; skipping"
+                        )
+                        continue
+                    cals.append(sliced)
                     kept.append(sn)
                 if not cals:
                     logger.warning(f"{source} cast {cast_no}: no sensors in pool, skipping")

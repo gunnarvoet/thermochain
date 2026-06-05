@@ -823,3 +823,25 @@ def test_compute_ctd_offsets_skips_degenerate_pool_file(ctd_cal_mooring):
     pre = xr.open_dataarray(m._offsets_out_path("pre"))
     assert 301222 not in pre.sn.values.tolist()
     pre.close()
+
+
+def test_compute_ctd_offsets_skips_sensor_with_no_cast_overlap(ctd_cal_mooring):
+    """A pool file that is non-empty but has no samples in the cast period is skipped."""
+    m = Mooring(ctd_cal_mooring)
+    pool = m._cal_cast_pool_dir("pre")
+    # overwrite 301222's pre-cast-1 pool file with data on a DIFFERENT day,
+    # so it is non-empty globally but has zero overlap with the cast-1 window.
+    bad = next(pool.glob("*301222*.nc"))
+    times = np.arange(
+        np.datetime64("2099-01-01T00:00:00"),
+        np.datetime64("2099-01-01T00:10:00"),
+        np.timedelta64(2, "s"),
+    )
+    xr.DataArray(np.full(times.size, 4.9), dims="time",
+                 coords={"time": times}, name="t").to_netcdf(bad)
+    summary = m.compute_ctd_offsets(sources=["pre"])
+    # 301222 dropped from cast 1 (no overlap); 301111 (cast1) + 301333 (cast4) remain
+    assert summary["pre"]["written"] == 2
+    pre = xr.open_dataarray(m._offsets_out_path("pre"))
+    assert 301222 not in pre.sn.values.tolist()
+    pre.close()
