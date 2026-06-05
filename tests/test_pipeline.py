@@ -491,3 +491,13 @@ def test_status_summary_drift_column(drift_mooring):
     after = m.status_summary()
     assert "testfit" in after.loc["deep", "drift"]
     assert after.loc["shallow", "drift"] == "-"
+
+
+def test_fit_drift_label_arg_overrides_drift_parameters_label(drift_mooring):
+    m = Mooring(drift_mooring)
+    aux = Path(m.cfg.path.root) / "data" / "aux"
+    # label= arg wins over a label inside drift_parameters (docstring contract),
+    # and a stray "label" key in the override dict must not reach DriftParameters.
+    m.fit_drift(drift_parameters={"fit_mode": "linear", "label": "ignored"}, label="winner")
+    assert (aux / "drift_testproj_a_winner.nc").exists()
+    assert not (aux / "drift_testproj_a_ignored.nc").exists()

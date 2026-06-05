@@ -719,14 +719,14 @@ class Mooring(ProcessThermistorMooring):
             ``{segment: sensor_drift | None}`` (``None`` where skipped).
         """
         base = dict(self.cfg.get("drift_parameters", {}) or {})
-        label = label or base.pop("label", None)
+        config_label = base.pop("label", None)
+        override_label = None
         if drift_parameters:
             override = dict(drift_parameters)
-            label = override.pop("label", None) or label
-            base.pop("label", None)
+            override_label = override.pop("label", None)
             base.update(override)
-        else:
-            base.pop("label", None)
+        # priority: explicit label= arg > drift_parameters override label > config label
+        label = label or override_label or config_label
         if label is None:
             raise ValueError(
                 "fit_drift needs a label (config drift_parameters.label or label=)"
