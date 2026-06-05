@@ -337,3 +337,32 @@ def test_drift_parameters_as_dict_roundtrips_for_sensor_drift():
         "exclude_sn", "tau0", "tau_bounds", "beta_bounds", "fit_mode",
         "iterate_subtract", "iterate_mode", "amplitude_threshold_mK", "manual_outlier_sns",
     }
+
+
+from thermodrift.pipeline import drift_provenance_attrs  # noqa: E402
+
+
+def test_drift_provenance_attrs_are_netcdf_safe():
+    dp = DriftParameters.from_dict(
+        {"fit_mode": "auto", "use_spline": True, "spline_smooth": 5e-6,
+         "tau_bounds": (5.0, 180.0), "manual_outlier_sns": [236109], "exclude": 1e-3}
+    )
+    attrs = drift_provenance_attrs(dp, label="spline_slowtau")
+    assert attrs["drift_label"] == "spline_slowtau"
+    assert attrs["drift_param_fit_mode"] == "auto"
+    # bool -> int (NetCDF has no bool scalar attr)
+    assert attrs["drift_param_use_spline"] == 1
+    assert isinstance(attrs["drift_param_use_spline"], int)
+    assert attrs["drift_param_spline_smooth"] == 5e-6
+    # 2-tuple bounds -> _lo / _hi floats
+    assert attrs["drift_param_tau_bounds_lo"] == 5.0
+    assert attrs["drift_param_tau_bounds_hi"] == 180.0
+    # list -> int64 array
+    np.testing.assert_array_equal(attrs["drift_param_manual_outlier_sns"], np.array([236109]))
+    # None -> empty-string sentinel
+    assert attrs["drift_param_exclude_sn"] == ""
+    # scalar exclude stays a float
+    assert attrs["drift_param_exclude"] == 1e-3
+    # no value is a tuple / bool / None (round-trips through to_netcdf)
+    for v in attrs.values():
+        assert not isinstance(v, (tuple, bool, type(None)))

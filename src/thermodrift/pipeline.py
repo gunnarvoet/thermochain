@@ -199,6 +199,44 @@ class DriftParameters:
         return asdict(self)
 
 
+def drift_provenance_attrs(params, label):
+    """Flatten DriftParameters + label into NetCDF-safe attrs.
+
+    NetCDF attrs accept scalars, strings, and 1-D numeric arrays — not
+    tuples, bools, or ``None``. Two-element bounds become ``_lo`` / ``_hi``
+    floats; bools become 0/1 ints; lists become int64 arrays; ``None``
+    becomes an empty string. All keys are prefixed ``drift_param_`` (the
+    ``label`` lands in ``drift_label``).
+
+    Parameters
+    ----------
+    params : DriftParameters
+        Validated fit parameters.
+    label : str
+        Drift-product label (filename key).
+
+    Returns
+    -------
+    dict
+        NetCDF-safe attrs for the drift and diagnostic products.
+    """
+    attrs = {"drift_label": str(label)}
+    for key, value in params.as_dict().items():
+        name = f"drift_param_{key}"
+        if value is None:
+            attrs[name] = ""
+        elif isinstance(value, bool):
+            attrs[name] = int(value)
+        elif isinstance(value, (tuple, list)) and len(value) == 2 and key.endswith("_bounds"):
+            attrs[f"{name}_lo"] = float(value[0])
+            attrs[f"{name}_hi"] = float(value[1])
+        elif isinstance(value, (tuple, list)):
+            attrs[name] = np.asarray(value, dtype="int64" if key == "manual_outlier_sns" else float)
+        else:
+            attrs[name] = value
+    return attrs
+
+
 def parse_gridding(block, defaults=None):
     """Validate a gridding block and convert dt/max_gap/chunk to np.timedelta64.
 
