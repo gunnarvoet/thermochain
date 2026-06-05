@@ -268,3 +268,24 @@ def test_cut_and_cal_respects_ignore_sns(cal_mooring):
     assert summary["deep"]["written"] == 1
     l1dir = Path(m.cfg.path.data.procl1)
     assert not list(l1dir.glob(f"*{ignore_sn:06d}*_L1.nc"))
+
+
+def test_status_per_sensor_reports_l0_l1_cal_method(cal_mooring):
+    m = Mooring(cal_mooring)
+    before = m.status()
+    deep_sn = int(sorted(m.segment_sensors("deep").index)[0])
+    assert bool(before.loc[deep_sn, "l0"]) is True
+    assert bool(before.loc[deep_sn, "l1"]) is False
+    assert before.loc[deep_sn, "segment"] == "deep"
+
+    m.cut_and_cal(segments=["deep"])
+    after = m.status()
+    assert bool(after.loc[deep_sn, "l1"]) is True
+    assert after.loc[deep_sn, "cal_method"] == "scalar_pre_only"
+
+
+def test_status_summary_reports_l1_count(cal_mooring):
+    m = Mooring(cal_mooring)
+    assert m.status_summary().loc["deep", "l1"] == "0/2"
+    m.cut_and_cal(segments=["deep"])
+    assert m.status_summary().loc["deep", "l1"] == "2/2"

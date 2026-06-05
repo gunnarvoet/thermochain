@@ -537,28 +537,78 @@ class Mooring(ProcessThermistorMooring):
             summary[seg] = {"written": written, "skipped": skipped, "chunks": len(start_times)}
         return summary
 
-    def status_summary(self):
-        """Per-segment progress: expected sensor count and gridded-L1 chunk coverage.
+    def status(self):
+        """Per-sensor progress: L0 / L1 presence + effective cal method.
 
-        Lazy scan of the grid dir on each call. Columns: ``n`` (sensors
-        after ignore_sns), ``gridL1`` (``present/expected`` chunks).
+        Lazy scan of the L0 and L1 dirs on each call. Index is SN;
+        columns: ``type``, ``segment``, ``ignored``, ``l0``, ``l1``,
+        ``cal_method`` (read from the L1 ``cal_method`` attr).
 
         Returns
         -------
         pd.DataFrame
-            Index is segment name; columns are ``n`` (int) and
+            Indexed by SN; one row per sensor in the mooring sheet.
+        """
+        l0dir = self._procl0_dir()
+        l1dir = self._procl1_dir()
+        ignore = set(self._ignore_sns())
+        seg_of = {
+            int(sn): seg
+            for seg in self.segments_cfg
+            for sn in self.segment_sensors(seg).index
+        }
+        rows = []
+        for sn in self.mooring_info.index:
+            sn = int(sn)
+            l1_files = list(l1dir.glob(f"*{sn:06d}*_L1.nc")) if l1dir.exists() else []
+            cal_method = ""
+            if l1_files:
+                with xr.open_dataarray(l1_files[0]) as da:
+                    cal_method = da.attrs.get("cal_method", "")
+            rows.append({
+                "sn": sn,
+                "type": str(self.mooring_info.loc[sn]["type"]),
+                "segment": seg_of.get(sn, ""),
+                "ignored": sn in ignore,
+                "l0": bool(list(l0dir.glob(f"*{sn:06d}*.nc"))) if l0dir.exists() else False,
+                "l1": bool(l1_files),
+                "cal_method": cal_method,
+            })
+        return pd.DataFrame(rows).set_index("sn")
+
+    def status_summary(self):
+        """Per-segment progress: sensor count, L1 coverage, gridded-L1 chunk coverage.
+
+        Lazy scan of the L1 and grid dirs on each call. Columns: ``n``
+        (sensors after ignore_sns), ``l1`` (``present/n`` per-sensor L1),
+        ``gridL1`` (``present/expected`` chunks).
+
+        Returns
+        -------
+        pd.DataFrame
+            Index is segment name; columns ``n`` (int), ``l1`` (str),
             ``gridL1`` (str ``"present/expected"``).
         """
         grid_dir = self._grid_dir()
+        l1dir = self._procl1_dir()
         ignore = set(self._ignore_sns())
         rows = []
         for seg in self.segments_cfg:
             gp = self.gridding[seg]
-            sns = [s for s in self.segment_sensors(seg).index if int(s) not in ignore]
+            sns = [int(s) for s in self.segment_sensors(seg).index if int(s) not in ignore]
+            l1_present = sum(
+                1 for s in sns
+                if l1dir.exists() and list(l1dir.glob(f"*{s:06d}*_L1.nc"))
+            )
             n_chunks = len(
                 np.arange(self.cfg.start_time, self.cfg.end_time, gp["chunk"], dtype="datetime64[s]")
             )
             pattern = f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}_{seg}_L1_*.nc"
             present = len(list(grid_dir.glob(pattern))) if grid_dir.exists() else 0
-            rows.append({"segment": seg, "n": len(sns), "gridL1": f"{present}/{n_chunks}"})
+            rows.append({
+                "segment": seg,
+                "n": len(sns),
+                "l1": f"{l1_present}/{len(sns)}",
+                "gridL1": f"{present}/{n_chunks}",
+            })
         return pd.DataFrame(rows).set_index("segment")
