@@ -1,4 +1,6 @@
 # tests/test_pipeline.py
+import shutil
+
 import numpy as np
 import pytest
 
@@ -539,3 +541,74 @@ def test_correct_drift_extrapolates_before_first_window():
     out = correct_drift(sensor, 301111, drift)
     # the early sample extrapolates to a slightly negative drift (no NaN)
     assert not np.isnan(float(out.isel(time=0)))
+
+
+def _only(paths):
+    paths = list(paths)
+    assert len(paths) == 1, f"expected 1 file, got {paths}"
+    return paths[0]
+
+
+def test_make_l2_writes_per_sensor_l2_with_attrs(l2_mooring):
+    m = Mooring(l2_mooring)
+    procl2 = m._procl2_dir()
+    procl1 = m._procl1_dir()
+
+    summary = m.make_l2()                     # config default: label testfit, deep only
+    assert set(summary) == {"deep"}
+    assert summary["deep"]["written"] == 3
+
+    deep_sns = sorted(int(s) for s in m.segment_sensors("deep").index)
+    # zero-drift sensor (i=0): L2 == L1
+    sn0 = deep_sns[0]
+    l1 = xr.open_dataarray(_only(procl1.glob(f"*__{sn0:06d}_L1.nc")))
+    l2 = xr.open_dataarray(_only(procl2.glob(f"*__{sn0:06d}_L2.nc")))
+    # zero drift: L2 values equal L1; ignore the extra provenance coords
+    # (sn/depth/window) that correct_drift carries through from the drift product
+    xr.testing.assert_allclose(l1, l2.reset_coords(drop=True), atol=1e-12)
+    assert l2.attrs["sn"] == sn0
+    assert l2.attrs["SN"] == sn0             # L1 attrs carried over (copy)
+    # nonzero-drift sensor: a correction was applied
+    sn2 = deep_sns[2]
+    l1b = xr.open_dataarray(_only(procl1.glob(f"*__{sn2:06d}_L1.nc")))
+    l2b = xr.open_dataarray(_only(procl2.glob(f"*__{sn2:06d}_L2.nc")))
+    assert float((l1b - l2b).max()) > 0.0
+
+
+def test_make_l2_rejects_non_drift_segment(l2_mooring):
+    m = Mooring(l2_mooring)
+    with pytest.raises(ValueError, match="not a drift segment"):
+        m.make_l2(segments=["shallow"])
+
+
+def test_make_l2_idempotent_then_overwrite(l2_mooring):
+    m = Mooring(l2_mooring)
+    first = m.make_l2()
+    assert first["deep"]["written"] == 3 and first["deep"]["skipped"] == 0
+    second = m.make_l2()
+    assert second["deep"]["written"] == 0 and second["deep"]["skipped"] == 3
+    third = m.make_l2(overwrite=True)
+    assert third["deep"]["written"] == 3
+
+
+def test_make_l2_respects_ignore_sns(l2_mooring):
+    m = Mooring(l2_mooring)
+    drop = int(sorted(m.segment_sensors("deep").index)[0])
+    m.cfg.ignore_sns = [drop]
+    summary = m.make_l2()
+    assert summary["deep"]["written"] == 2
+    assert not list(m._procl2_dir().glob(f"*{drop:06d}*_L2.nc"))
+
+
+def test_make_l2_drift_label_override(l2_mooring):
+    m = Mooring(l2_mooring)
+    aux = m._aux_dir()
+    shutil.copy(aux / "drift_testproj_a_testfit.nc", aux / "drift_testproj_a_alt.nc")
+    summary = m.make_l2(drift_label="alt")
+    assert summary["deep"]["written"] == 3
+
+
+def test_make_l2_missing_drift_product_raises(l2_mooring):
+    m = Mooring(l2_mooring)
+    with pytest.raises(FileNotFoundError, match="drift product not found"):
+        m.make_l2(drift_label="does_not_exist")

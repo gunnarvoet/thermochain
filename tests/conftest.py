@@ -494,3 +494,108 @@ def drift_mooring(tmp_path):
     with open(cfgpath, "w") as f:
         yaml.safe_dump(cfg, f)
     return cfgpath
+
+
+@pytest.fixture
+def l2_mooring(tmp_path):
+    """Self-contained mooring for make_l2 + grid_l2.
+
+    Three deep sensors over 8 days at 1 min (per-sensor L1) + one shallow
+    (non-drift) sensor; a drift product drift_testproj_a_testfit.nc in aux
+    with dims (depth, window), sn on depth, time on window. Drift slope is
+    1e-4 * i per day so deep sensor i=0 has zero drift. Returns the config
+    path.
+    """
+    deep_sns = [301111, 301222, 301333]
+    shallow_sns = [302444]
+    all_sns = deep_sns + shallow_sns
+
+    data = tmp_path / "data"
+    procl1 = data / "proc" / "l1"
+    procl1.mkdir(parents=True)
+    (data / "proc" / "l2").mkdir(parents=True)
+    (data / "aux").mkdir(parents=True)
+
+    # sheets — include all columns required by sensor_sheet_columns_to_dt64
+    pd.DataFrame([
+        {
+            "SN": sn,
+            "Type": "RBR Solo",
+            "Pre-Deployment CTD Calibration Time": "2024-11-20 12:00:00",
+            "Pre-Deployment CTD Calibration Cast": 1,
+            "Post-Deployment CTD Calibration Time": "2024-12-02 12:00:00",
+            "Post-Deployment CTD Calibration Cast": 5,
+            "Pre-Deployment Time Calibration": "2024-11-18 10:00:00",
+            "Post-Deployment Time Calibration": "2024-12-05 10:00:00",
+            "Post-Deployment UTC Time": "2024-12-05 10:00:00",
+            "Post-Deployment Logger Time": "2024-12-05 10:00:05",
+            "exclude": 0,
+        }
+        for sn in all_sns
+    ]).to_csv(data / "sensor_sheet.csv", index=False)
+    depths = [4300.0 - 4.0 * i for i in range(len(deep_sns))]
+    moor_rows = (
+        [{"type": "RBR Solo", "SN": sn, "height": float(i + 1), "depth": depths[i],
+          "segment": "deep"} for i, sn in enumerate(deep_sns)]
+        + [{"type": "RBR Solo", "SN": sn, "height": 50.0, "depth": 2000.0,
+            "segment": "shallow"} for sn in shallow_sns]
+    )
+    pd.DataFrame(moor_rows).to_csv(data / "mooring_sheet.csv", index=False)
+
+    # per-sensor L1 for the deep sensors
+    start = np.datetime64("2024-11-22T00:00")
+    end = np.datetime64("2024-11-30T00:00")
+    times = np.arange(start, end, np.timedelta64(1, "m"))
+    for i, sn in enumerate(deep_sns):
+        da = xr.DataArray(
+            4.0 - 0.001 * i + 1e-3 * np.sin(np.arange(times.size) / 500.0),
+            dims="time", coords={"time": times}, name="t",
+        )
+        da.attrs.update({"sampling period in s": 60.0, "units": "degree_C",
+                         "long_name": "temperature", "SN": sn})
+        da.to_netcdf(procl1 / f"testproj_a__rbr__{sn:06d}_L1.nc")
+
+    # drift product: dims (depth, window); sn on depth, time on window
+    windows = np.arange(start, end, np.timedelta64(1, "D")) + np.timedelta64(12, "h")
+    elapsed_d = (windows - start) / np.timedelta64(1, "D")
+    drift_vals = np.outer(1e-4 * np.arange(len(deep_sns)), elapsed_d)  # (depth, window)
+    drift = xr.DataArray(
+        drift_vals,
+        dims=("depth", "window"),
+        coords={
+            "depth": depths,
+            "sn": ("depth", deep_sns),
+            "window": np.arange(windows.size),
+            "time": ("window", windows),
+        },
+        name="drift",
+    )
+    drift.to_netcdf(data / "aux" / "drift_testproj_a_testfit.nc")
+
+    cfg = {
+        "info": "l2 test",
+        "meta": {"mooring_name": "A", "project": "TestProj", "PI": "x", "email": "x"},
+        "path": {
+            "fig": "fig/",
+            "data": {"raw": {"rbr": "data/raw/", "sbe": "data/raw/"},
+                     "proc": "data/proc/", "grid": "data/grid/"},
+            "sensors": "data/sensor_sheet.csv",
+            "mooring": "data/mooring_sheet.csv",
+            "aux": "data/aux/",
+        },
+        "start_time": "2024-11-22 00:00:00",
+        "end_time": "2024-11-30 00:00:00",
+        "ignore_sns": [],
+        "gridding": {"dt": "10s", "max_gap": "30s", "chunk": "2D"},
+        "segments": {
+            "deep": {"select": {"segment": "deep"}, "drift": True},
+            "shallow": {"select": {"segment": "shallow"}},
+        },
+        "drift_parameters": {"label": "testfit"},
+    }
+    cfgdir = tmp_path / "run"
+    cfgdir.mkdir()
+    cfgpath = cfgdir / "config.yml"
+    with open(cfgpath, "w") as f:
+        yaml.safe_dump(cfg, f)
+    return cfgpath

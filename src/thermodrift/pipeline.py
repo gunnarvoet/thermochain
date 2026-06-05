@@ -493,6 +493,9 @@ class Mooring(ProcessThermistorMooring):
     def _procl1_dir(self):
         return Path(self.cfg.path.data.procl1)
 
+    def _procl2_dir(self):
+        return Path(self.cfg.path.data.procl2)
+
     def _segment_cal_method(self, segment):
         """Resolve a segment's calibration method (segment override, else top-level default)."""
         seg = self.segments_cfg[segment]
@@ -799,6 +802,101 @@ class Mooring(ProcessThermistorMooring):
         da = xr.load_dataarray(drift_path)
         da.attrs.update(drift_provenance_attrs(params, label))
         da.to_netcdf(drift_path, mode="w")
+
+    def _l2_filename(self, sn, sensor_type):
+        """Per-sensor L2 filename (project-prefixed, matching notebook 06).
+
+        ``{project}_{mooring}__{type}__{sn:06}_L2.nc`` (e.g.
+        ``motive_a__rbr__236109_L2.nc``). Differs from the per-sensor L1
+        name (no project prefix) — flagged for the reorg phase.
+        """
+        return (
+            f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}"
+            f"__{sensor_type.lower()}__{sn:06}_L2.nc"
+        )
+
+    def make_l2(self, segments=None, drift_label=None, overwrite=False):
+        """Subtract the drift product from per-sensor L1 to make per-sensor L2.
+
+        Runs only on the ``drift: true`` segments (drift handled downstream
+        of cut/cal). For each segment it loads the drift product
+        ``drift_{project}_{mooring}_{label}.nc`` from ``path.aux``
+        (``label`` defaults to the config ``drift_parameters.label``;
+        override with ``drift_label=``), re-dimensions it to ``(sn, time)``,
+        and for each sensor interpolates the drift onto that sensor's L1
+        sample times and subtracts (via :func:`correct_drift`). The L2
+        series carries the L1 attrs plus an ``sn`` attr (matching notebook
+        06). ``ignore_sns`` (config UNION sensor-sheet ``exclude==1``) is
+        applied on top of segment selection. Idempotent: existing L2 files
+        are skipped unless ``overwrite=True``.
+
+        Per-sensor L1 is read from :meth:`_procl1_dir`; L2 is written to
+        :meth:`_procl2_dir`. Kept separate from :meth:`grid_l2` so the
+        per-sensor L2 is inspectable before gridding.
+
+        Parameters
+        ----------
+        segments : str, list of str, or None, optional
+            Drift segment(s). ``None`` runs all ``drift: true`` segments.
+        drift_label : str or None, optional
+            Drift-product label to consume. Defaults to the config
+            ``drift_parameters.label``.
+        overwrite : bool, optional
+            Rewrite existing L2 files. Default ``False``.
+
+        Returns
+        -------
+        dict
+            ``{segment: {"written": int, "skipped": int}}``.
+        """
+        label = drift_label or (self.cfg.get("drift_parameters", {}) or {}).get("label")
+        if label is None:
+            raise ValueError(
+                "make_l2 needs a drift label (config drift_parameters.label or drift_label=)"
+            )
+        aux = self._aux_dir()
+        procl1 = self._procl1_dir()
+        procl2 = self._procl2_dir()
+        procl2.mkdir(parents=True, exist_ok=True)
+        ignore = set(self._ignore_sns())
+        mooring_id = f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}"
+
+        summary = {}
+        for seg in self._drift_segment_names(segments):
+            drift_path = aux / f"drift_{mooring_id}_{label}.nc"
+            if not drift_path.exists():
+                raise FileNotFoundError(f"drift product not found: {drift_path}")
+            drift = xr.open_dataarray(drift_path).swap_dims(
+                {"depth": "sn", "window": "time"}
+            )
+            written = skipped = 0
+            for sn in self.segment_sensors(seg).index:
+                sn = int(sn)
+                if sn in ignore:
+                    continue
+                sensor_type = str(self.mooring_info.loc[sn]["type"])
+                l2_path = procl2 / self._l2_filename(sn, sensor_type)
+                if l2_path.exists():
+                    if not overwrite:
+                        skipped += 1
+                        continue
+                    l2_path.unlink()
+
+                l1_files = list(procl1.glob(f"*__{sn:06d}_L1.nc"))
+                if not l1_files:
+                    logger.warning(f"SN{sn}: no L1 file in {procl1}, skipping")
+                    continue
+                tmp = xr.open_dataarray(l1_files[0])
+                tc = correct_drift(tmp, sn, drift)
+                tc.attrs = tmp.attrs.copy()
+                tc.attrs["sn"] = sn
+                tc.to_netcdf(l2_path, mode="w")
+                tc.close()
+                tmp.close()
+                written += 1
+            drift.close()
+            summary[seg] = {"written": written, "skipped": skipped}
+        return summary
 
     def _grid_dir(self):
         d = Path(self.cfg.path.data.grid)
