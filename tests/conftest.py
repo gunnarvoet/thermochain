@@ -586,7 +586,9 @@ def l2_mooring(tmp_path):
         "start_time": "2024-11-22 00:00:00",
         "end_time": "2024-11-30 00:00:00",
         "ignore_sns": [],
-        "gridding": {"dt": "10s", "max_gap": "30s", "chunk": "2D"},
+        # native L1 sampling here is 60s; max_gap must be >= it, else every
+        # interval is treated as a gap (grid_thermistors._insert_gap_nans).
+        "gridding": {"dt": "10s", "max_gap": "120s", "chunk": "2D"},
         "segments": {
             "deep": {"select": {"segment": "deep"}, "drift": True},
             "shallow": {"select": {"segment": "shallow"}},

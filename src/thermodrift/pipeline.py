@@ -682,6 +682,16 @@ class Mooring(ProcessThermistorMooring):
         """
         return self._grid_dir() / "l1"
 
+    def _gridl2_dir(self):
+        """Directory holding gridded-L2 chunks (``grid/l2/``).
+
+        Mirrors :meth:`_gridl1_dir`. NB: ``grid_l1`` currently writes to the
+        bare ``_grid_dir()`` (``grid/``) rather than ``grid/l1/`` — a
+        pre-existing Phase-1 wrinkle left for the reorg phase. ``grid_l2``
+        writes correctly into ``grid/l2/``.
+        """
+        return self._grid_dir() / "l2"
+
     def _drift_segments(self):
         """Segment names flagged ``drift: true`` in the config."""
         return [name for name, seg in self.segments_cfg.items() if seg.get("drift")]
@@ -954,6 +964,64 @@ class Mooring(ProcessThermistorMooring):
                     full = grid_thermistors(
                         info_sub,
                         procl1,
+                        start=self.cfg.start_time,
+                        end=self.cfg.end_time,
+                        dt=gp["dt"],
+                        max_gap=gp["max_gap"],
+                        exclude_sn=self._ignore_sns(),
+                    )
+                full.sel(time=slice(ti, ti + gp["chunk"])).to_netcdf(fpath)
+                written += 1
+            if full is not None:
+                del full
+            summary[seg] = {"written": written, "skipped": skipped, "chunks": len(start_times)}
+        return summary
+
+    def grid_l2(self, segments=None, overwrite=False):
+        """Grid per-sensor L2 to (depth, time) chunks, for drift segments.
+
+        Same gridding as :meth:`grid_l1` (per-segment ``dt``/``max_gap``/
+        ``chunk``, peak RAM bounded by one (depth x time) array via the
+        unchanged :func:`grid_thermistors`), but over the per-sensor L2
+        from :meth:`_procl2_dir` and written to :meth:`_gridl2_dir`
+        (``grid/l2/``). Runs only on the ``drift: true`` segments (the only
+        ones with an L2 product). Idempotent — existing chunk files are
+        skipped unless ``overwrite=True``. ``ignore_sns`` is applied via
+        ``exclude_sn``.
+
+        Parameters
+        ----------
+        segments : str, list of str, or None, optional
+            Drift segment(s). ``None`` runs all ``drift: true`` segments.
+        overwrite : bool, optional
+            Rewrite existing chunk files. Default ``False``.
+
+        Returns
+        -------
+        dict
+            ``{segment: {"written": int, "skipped": int, "chunks": int}}``.
+        """
+        gridl2_dir = self._gridl2_dir()
+        gridl2_dir.mkdir(parents=True, exist_ok=True)
+        procl2 = self._procl2_dir()
+        summary = {}
+        for seg in self._drift_segment_names(segments):
+            gp = self.gridding[seg]
+            info_sub = self.segment_sensors(seg)
+            start_times = np.arange(
+                self.cfg.start_time, self.cfg.end_time, gp["chunk"], dtype="datetime64[s]"
+            )
+            written = skipped = 0
+            full = None
+            for ti in start_times:
+                fpath = gridl2_dir / self._grid_filename(seg, 2, ti)
+                if fpath.exists() and not overwrite:
+                    skipped += 1
+                    continue
+                if full is None:
+                    full = grid_thermistors(
+                        info_sub,
+                        procl2,
                         start=self.cfg.start_time,
                         end=self.cfg.end_time,
                         dt=gp["dt"],

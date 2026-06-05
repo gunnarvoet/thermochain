@@ -612,3 +612,37 @@ def test_make_l2_missing_drift_product_raises(l2_mooring):
     m = Mooring(l2_mooring)
     with pytest.raises(FileNotFoundError, match="drift product not found"):
         m.make_l2(drift_label="does_not_exist")
+
+
+def test_grid_l2_writes_chunks_for_drift_segment(l2_mooring):
+    m = Mooring(l2_mooring)
+    m.make_l2()                              # per-sensor L2 first
+    summary = m.grid_l2()
+    assert set(summary) == {"deep"}
+    assert summary["deep"]["chunks"] == 4    # 8 days / 2D chunk
+    assert summary["deep"]["written"] == 4
+
+    gridl2 = m._gridl2_dir()
+    assert gridl2 == m._grid_dir() / "l2"
+    files = sorted(gridl2.glob("testproj_a_deep_L2_*.nc"))
+    assert len(files) == 4
+    da = xr.open_dataarray(files[0])
+    assert "depth" in da.dims and "time" in da.dims
+    assert "sn" in da.coords
+
+
+def test_grid_l2_rejects_non_drift_segment(l2_mooring):
+    m = Mooring(l2_mooring)
+    with pytest.raises(ValueError, match="not a drift segment"):
+        m.grid_l2(segments=["shallow"])
+
+
+def test_grid_l2_idempotent_then_overwrite(l2_mooring):
+    m = Mooring(l2_mooring)
+    m.make_l2()
+    first = m.grid_l2()
+    assert first["deep"]["written"] == 4 and first["deep"]["skipped"] == 0
+    second = m.grid_l2()
+    assert second["deep"]["written"] == 0 and second["deep"]["skipped"] == 4
+    third = m.grid_l2(overwrite=True)
+    assert third["deep"]["written"] == 4
