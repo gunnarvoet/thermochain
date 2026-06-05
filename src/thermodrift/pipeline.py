@@ -13,6 +13,7 @@ from .io import (  # noqa: F401
     ProcessThermistorMooring,
     grid_thermistors,
     logger,
+    rbr_ctd_cal_find_offset,
     rbr_cut_and_cal,
     rbr_cut_and_cal_interp,
     sensor_drift,
@@ -610,6 +611,159 @@ class Mooring(ProcessThermistorMooring):
         if ctdcal_post is None:
             ctdcal_post = _load("offsets_post")
         return ctdcal_pre, ctdcal_post
+
+    def _ctd_dir(self):
+        """Base directory for CTD cal-cast files (``path.ctd``)."""
+        d = Path(self.cfg.path.ctd)
+        if not d.is_absolute():
+            d = Path(self.cfg.path.root) / d
+        return d
+
+    def _load_cal_stops(self):
+        """Read the declarative per-cast cal-stop windows (``path.cal_stops``).
+
+        Columns: ``source`` (pre/post), ``cast`` (int), ``stop_start`` /
+        ``stop_end`` (ISO datetimes), ``ctd_file`` (relative to
+        :meth:`_ctd_dir`), and advisory ``ref_temp``.
+        """
+        p = Path(self.cfg.path.cal_stops)
+        if not p.is_absolute():
+            p = Path(self.cfg.path.root) / p
+        return pd.read_csv(p)
+
+    def _cal_cast_pool_dir(self, source):
+        """Pool dir of per-sensor cal-cast series (``calibration.cal_casts_{source}``)."""
+        cal = self.cfg.get("calibration", {}) or {}
+        key = f"cal_casts_{source}"
+        if key not in cal:
+            raise KeyError(f"calibration.{key} not set in config")
+        d = Path(cal[key])
+        if not d.is_absolute():
+            d = Path(self.cfg.path.root) / d
+        return d
+
+    def _offsets_out_path(self, source):
+        """Output offsets NetCDF for a source (``calibration.offsets_{source}``)."""
+        cal = self.cfg.get("calibration", {}) or {}
+        key = f"offsets_{source}"
+        if key not in cal:
+            raise KeyError(f"calibration.{key} not set in config")
+        p = Path(cal[key])
+        if not p.is_absolute():
+            p = Path(self.cfg.path.root) / p
+        return p
+
+    def compute_ctd_offsets(self, sources=None, overwrite=False):
+        """Compute per-sensor CTD-cal offsets and write the offsets NetCDF(s).
+
+        The deterministic CTD-offset stage. Consumes the declarative
+        ``cal_stops.csv`` (:meth:`_load_cal_stops`), the per-source cal-cast
+        pools (:meth:`_cal_cast_pool_dir`), and the sensor-sheet cast
+        assignments (``pre_ctd_cal_cast`` / ``post_ctd_cal_cast``). For each
+        chosen stop it concatenates every assigned sensor's cal-cast series
+        onto a common time grid (``interp_like`` the first sensor), calls the
+        unchanged :func:`rbr_ctd_cal_find_offset` kernel, takes the
+        both-CTD-sensors mean difference (``m=0``), and assigns per-sensor
+        ``cast`` / ``cal_temp`` (= ``mean_temp.mean('sn')``) coords. Offsets
+        are concatenated across casts, ``sortby('sn')``-ed, and written to
+        ``calibration.offsets_{source}`` — the file Phase-1b
+        :meth:`cut_and_cal` reads via :func:`load_cal_offsets`.
+
+        Sensor selection is ``(assignment == cast)`` intersected with
+        pool-file presence, in sensor-sheet order. The stage operates over the
+        full project sensor sheet, so it produces the **project-wide** offsets
+        files. Idempotent: an existing output is skipped unless
+        ``overwrite=True``.
+
+        Parameters
+        ----------
+        sources : str, list of str, or None, optional
+            ``"pre"`` / ``"post"`` source(s). ``None`` runs every source
+            present in ``cal_stops.csv``.
+        overwrite : bool, optional
+            Rewrite existing offsets files. Default ``False``.
+
+        Returns
+        -------
+        dict
+            ``{source: {"written": int, "skipped": int, "path": str}}``
+            (``written`` is the sensor count; ``skipped`` is 1 when the
+            output already existed and was kept).
+        """
+        cal_stops = self._load_cal_stops()
+        if sources is None:
+            sources = sorted(cal_stops["source"].unique())
+        elif isinstance(sources, str):
+            sources = [sources]
+
+        assign_col = {"pre": "pre_ctd_cal_cast", "post": "post_ctd_cal_cast"}
+        summary = {}
+        for source in sources:
+            if source not in assign_col:
+                raise ValueError(f"source {source!r} not supported; expected 'pre' or 'post'")
+            out_path = self._offsets_out_path(source)
+            if out_path.exists() and not overwrite:
+                logger.info(f"{source}: offsets {out_path.name} exists, skipping")
+                summary[source] = {"written": 0, "skipped": 1, "path": str(out_path)}
+                continue
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            pool = self._cal_cast_pool_dir(source)
+            col = assign_col[source]
+            rows = cal_stops[cal_stops["source"] == source]
+
+            parts = []
+            for _, r in rows.iterrows():
+                cast_no = int(r["cast"])
+                ctd = xr.open_dataset(self._ctd_dir() / str(r["ctd_file"]))
+                cast_period = slice(ctd.time.values[0], ctd.time.values[-1])
+
+                assign = pd.to_numeric(self.sensor_info[col], errors="coerce")
+                assigned = [int(sn) for sn in self.sensor_info.index[assign == cast_no]]
+                cals, kept = [], []
+                for sn in assigned:
+                    files = list(pool.glob(f"*{sn:06d}*.nc"))
+                    if not files:
+                        continue                      # absent from pool -> cal-ignored
+                    if len(files) > 1:
+                        raise OSError(
+                            f"ambiguous pool files for SN{sn:06d} in {pool}: {[f.name for f in files]}"
+                        )
+                    cals.append(xr.open_dataarray(files[0]).sel(time=cast_period))
+                    kept.append(sn)
+                if not cals:
+                    logger.warning(f"{source} cast {cast_no}: no sensors in pool, skipping")
+                    ctd.close()
+                    continue
+
+                time = cals[0].time.copy()
+                c = xr.concat([ci.interp_like(time) for ci in cals], dim="n")
+                for ci in cals:
+                    ci.close()
+                c["sn"] = (("n"), kept)
+                ts = slice(np.datetime64(r["stop_start"]), np.datetime64(r["stop_end"]))
+                res = rbr_ctd_cal_find_offset(ts, c, ctd)
+
+                offsets = res.isel(m=0).mean_diff.drop_vars("sensor", errors="ignore")
+                temp = float(res.mean_temp.mean(dim="sn").data)
+                n_sn = offsets.sizes["sn"]
+                part = offsets.assign_coords(
+                    cast=("sn", np.full(n_sn, cast_no, dtype=int)),
+                    cal_temp=("sn", np.full(n_sn, temp)),
+                )
+                parts.append(part)
+                ctd.close()
+
+            if not parts:
+                logger.warning(f"{source}: no offsets computed, nothing written")
+                summary[source] = {"written": 0, "skipped": 0, "path": str(out_path)}
+                continue
+            out = xr.concat(parts, dim="sn", coords="minimal").sortby("sn")
+            out.name = "offset"
+            out.to_netcdf(out_path, mode="w")
+            summary[source] = {
+                "written": int(out.sizes["sn"]), "skipped": 0, "path": str(out_path),
+            }
+        return summary
 
     def _cast_time(self, sn, col):
         """Per-sensor CTD cast time from the sensor sheet, or NaT if absent.

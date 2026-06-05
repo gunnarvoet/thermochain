@@ -601,3 +601,155 @@ def l2_mooring(tmp_path):
     with open(cfgpath, "w") as f:
         yaml.safe_dump(cfg, f)
     return cfgpath
+
+
+@pytest.fixture
+def ctd_cal_mooring(tmp_path):
+    """Self-contained project for compute_ctd_offsets.
+
+    Pre casts 1 (2 sensors) + 4 (1 sensor) -> cruise1 offsets; post cast 2
+    (2 sensors) -> cruise2 offsets. Pre pool files are pre-sliced to the
+    cast window; post pool files span the full post-cal period (sliced to
+    the cast period by the stage). CTD casts each have one ~6-min stop.
+    Returns the config path.
+    """
+    data = tmp_path / "data"
+    pre_pool = data / "aux" / "pre_cal_cast_data"
+    post_pool = data / "aux" / "post_cal" / "l0"
+    ctd_dir = data / "cruises"
+    pre_pool.mkdir(parents=True)
+    post_pool.mkdir(parents=True)
+    (ctd_dir / "cruise1").mkdir(parents=True)
+    (ctd_dir / "cruise2").mkdir(parents=True)
+    (data / "aux" / "cal_results").mkdir(parents=True)
+
+    # --- sensor sheet (raw column names; cast assignments drive selection) ---
+    pre1_sns = [301111, 301222]      # cast 1
+    pre4_sns = [301333]              # cast 4
+    post2_sns = [301111, 301222]     # cast 2 (same sensors, post side)
+    rows = []
+    for sn in [301111, 301222, 301333]:
+        pre_cast = 1 if sn in pre1_sns else 4
+        rows.append({
+            "SN": sn, "Type": "RBR Solo", "exclude": 0,
+            "Pre-Deployment CTD Calibration Time": "2024-11-12 12:00:00",
+            "Pre-Deployment CTD Calibration Cast": pre_cast,
+            "Post-Deployment CTD Calibration Time": "2025-12-08 12:00:00",
+            "Post-Deployment CTD Calibration Cast": 2 if sn in post2_sns else "",
+            "Pre-Deployment Time Calibration": "2024-11-10 10:00:00",
+            "Post-Deployment Time Calibration": "2025-12-15 10:00:00",
+            "Post-Deployment UTC Time": "2025-12-15 10:00:00",
+            "Post-Deployment Logger Time": "2025-12-15 10:00:05",
+        })
+    pd.DataFrame(rows).to_csv(data / "sensor_sheet.csv", index=False)
+    pd.DataFrame(
+        [{"type": "RBR Solo", "SN": sn, "depth": 4300.0 - 4.0 * i, "segment": "deep"}
+         for i, sn in enumerate([301111, 301222, 301333])]
+    ).to_csv(data / "mooring_sheet.csv", index=False)
+
+    # --- synthetic CTD casts: descend / ~6-min stop / ascend at 1 Hz ---
+    def make_ctd(day, stop_p, t1_val, t2_val):
+        times = np.arange(
+            np.datetime64(f"{day}T00:00:00"),
+            np.datetime64(f"{day}T00:20:00"),
+            np.timedelta64(1, "s"),
+        )
+        n = times.size
+        p = np.concatenate([
+            np.linspace(0.0, stop_p, n // 3),
+            np.full(n - 2 * (n // 3), stop_p),
+            np.linspace(stop_p, 0.0, n // 3),
+        ])
+        at_stop = np.isclose(p, stop_p)
+        t1 = np.where(at_stop, t1_val, 5.0)
+        t2 = np.where(at_stop, t2_val, 5.0)
+        return xr.Dataset(
+            {"p": ("time", p), "t1": ("time", t1), "t2": ("time", t2)},
+            coords={"time": times},
+        ), times, at_stop
+
+    ctd_specs = {
+        ("cruise1", 1): ("2024-11-08", 1000.0, 4.00, 4.01),
+        ("cruise1", 4): ("2024-11-12", 4040.0, 2.00, 2.01),
+        ("cruise2", 2): ("2025-12-08", 4040.0, 2.00, 2.02),
+    }
+    stop_windows = {}
+    for (cruise, cast), (day, stop_p, t1v, t2v) in ctd_specs.items():
+        ds, times, at_stop = make_ctd(day, stop_p, t1v, t2v)
+        cdir = ctd_dir / cruise
+        ds.to_netcdf(cdir / f"{cruise}_cast_{cast:03d}.nc")
+        sidx = np.flatnonzero(at_stop)
+        stop_windows[(cruise, cast)] = (times[sidx[0] + 30], times[sidx[-1] - 30])
+
+    # --- cal-cast pools: each assigned sensor records over its cast window ---
+    def write_sensor(pool, fname, day, sn, offset):
+        times = np.arange(
+            np.datetime64(f"{day}T00:00:00"),
+            np.datetime64(f"{day}T00:20:00"),
+            np.timedelta64(2, "s"),
+        )
+        # thermistor = (ctd at stop) - offset, so kernel recovers `offset`
+        da = xr.DataArray(5.0 - offset + 0.0 * np.arange(times.size),
+                          dims="time", coords={"time": times}, name="t")
+        da.attrs["SN"] = sn
+        da.to_netcdf(pool / fname)
+
+    offsets_truth = {301111: 0.0030, 301222: 0.0042, 301333: 0.0051}
+    for sn in pre1_sns:
+        write_sensor(pre_pool, f"motive_a__rbr__{sn:06d}_pre_ctd_cal.nc",
+                     "2024-11-08", sn, offsets_truth[sn])
+    for sn in pre4_sns:
+        write_sensor(pre_pool, f"motive_a__rbr__{sn:06d}_pre_ctd_cal.nc",
+                     "2024-11-12", sn, offsets_truth[sn])
+    for sn in post2_sns:
+        write_sensor(post_pool, f"motive_post_cal__rbr__{sn:06d}_L0.nc",
+                     "2025-12-08", sn, offsets_truth[sn] + 1e-4)
+
+    # --- cal_stops.csv (one row per selected stop per cast) ---
+    def iso(t):
+        return pd.Timestamp(t).isoformat()
+    stop_rows = []
+    for (cruise, cast), src in [
+        (("cruise1", 1), "pre"), (("cruise1", 4), "pre"), (("cruise2", 2), "post")
+    ]:
+        s, e = stop_windows[(cruise, cast)]
+        stop_rows.append({
+            "source": src, "cast": cast,
+            "stop_start": iso(s), "stop_end": iso(e),
+            "ctd_file": f"{cruise}/{cruise}_cast_{cast:03d}.nc",
+            "ref_temp": "",
+        })
+    pd.DataFrame(stop_rows).to_csv(data / "cal_stops.csv", index=False)
+
+    cfg = {
+        "info": "ctd cal test",
+        "meta": {"mooring_name": "A", "project": "MOTIVE", "PI": "x", "email": "x"},
+        "path": {
+            "fig": "fig/",
+            "data": {"raw": {"rbr": "data/raw/", "sbe": "data/raw/"},
+                     "proc": "data/proc/", "grid": "data/grid/"},
+            "sensors": "data/sensor_sheet.csv",
+            "mooring": "data/mooring_sheet.csv",
+            "aux": "data/aux/",
+            "ctd": "data/cruises/",
+            "cal_stops": "data/cal_stops.csv",
+        },
+        "start_time": "2024-11-22 00:00:00",
+        "end_time": "2025-12-10 00:00:00",
+        "ignore_sns": [],
+        "gridding": {"dt": "10s", "max_gap": "30s", "chunk": "2D"},
+        "calibration": {
+            "method": "linear_interp",
+            "cal_casts_pre": "data/aux/pre_cal_cast_data/",
+            "cal_casts_post": "data/aux/post_cal/l0/",
+            "offsets_pre": "data/aux/cal_results/motive_cruise1_cal_offsets.nc",
+            "offsets_post": "data/aux/cal_results/motive_cruise2_cal_offsets.nc",
+        },
+        "segments": {"deep": {"select": {"segment": "deep"}}},
+    }
+    cfgdir = tmp_path / "run"
+    cfgdir.mkdir()
+    cfgpath = cfgdir / "config.yml"
+    with open(cfgpath, "w") as f:
+        yaml.safe_dump(cfg, f)
+    return cfgpath

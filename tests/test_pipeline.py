@@ -729,3 +729,65 @@ def test_detect_cal_stops_empty_when_never_stationary():
         coords={"time": times},
     )
     assert len(detect_cal_stops(ctd)) == 0
+
+
+from thermodrift.io import rbr_ctd_cal_find_offset  # noqa: E402
+
+
+def test_compute_ctd_offsets_writes_both_files(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    summary = m.compute_ctd_offsets()
+    assert set(summary) == {"pre", "post"}
+    assert summary["pre"]["written"] == 3      # casts 1+4 -> 3 sensors
+    assert summary["post"]["written"] == 2     # cast 2 -> 2 sensors
+
+    pre = xr.open_dataset(m._offsets_out_path("pre"))
+    assert list(pre.data_vars) == ["offset"]
+    assert set(pre.coords) >= {"sn", "cast", "cal_temp"}
+    assert list(pre.sn.values) == sorted(pre.sn.values.tolist())   # sorted by sn
+    assert set(int(c) for c in pre.cast.values) == {1, 4}
+    post = xr.open_dataset(m._offsets_out_path("post"))
+    assert set(int(c) for c in post.cast.values) == {2}
+
+
+def test_compute_ctd_offsets_matches_kernel(ctd_cal_mooring):
+    """The stage's offset == a direct rbr_ctd_cal_find_offset on the same stack."""
+    m = Mooring(ctd_cal_mooring)
+    m.compute_ctd_offsets()
+    pre = xr.open_dataarray(m._offsets_out_path("pre"))
+
+    # rebuild cast-1 stack by hand and call the kernel directly
+    stops = m._load_cal_stops()
+    row = stops[(stops["source"] == "pre") & (stops["cast"] == 1)].iloc[0]
+    ctd = xr.open_dataset(m._ctd_dir() / row["ctd_file"])
+    pool = m._cal_cast_pool_dir("pre")
+    sns = [301111, 301222]
+    cals = [xr.open_dataarray(next(pool.glob(f"*{sn:06d}*.nc"))) for sn in sns]
+    time = cals[0].time.copy()
+    c = xr.concat([ci.interp_like(time) for ci in cals], dim="n")
+    c["sn"] = (("n"), sns)
+    ts = slice(np.datetime64(row["stop_start"]), np.datetime64(row["stop_end"]))
+    res = rbr_ctd_cal_find_offset(ts, c, ctd)
+    expected = res.isel(m=0).mean_diff
+    for sn in sns:
+        got = float(pre.sel(sn=sn))
+        exp = float(expected.sel(sn=sn))
+        assert got == pytest.approx(exp, abs=1e-12)
+
+
+def test_compute_ctd_offsets_idempotent_then_overwrite(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    first = m.compute_ctd_offsets()
+    assert first["pre"]["written"] == 3 and first["pre"]["skipped"] == 0
+    second = m.compute_ctd_offsets()
+    assert second["pre"]["written"] == 0 and second["pre"]["skipped"] == 1
+    third = m.compute_ctd_offsets(overwrite=True)
+    assert third["pre"]["written"] == 3
+
+
+def test_compute_ctd_offsets_single_source(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    summary = m.compute_ctd_offsets(sources=["post"])
+    assert set(summary) == {"post"}
+    assert m._offsets_out_path("post").exists()
+    assert not m._offsets_out_path("pre").exists()
