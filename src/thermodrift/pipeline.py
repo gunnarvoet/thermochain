@@ -1,14 +1,54 @@
 # src/thermodrift/pipeline.py
 """Config-driven Mooring pipeline orchestration over thermodrift primitives."""
 
-from pathlib import Path  # noqa: F401
+import re
+from pathlib import Path
 
 import numpy as np  # noqa: F401
 import pandas as pd
+import xarray as xr
 
 from .io import ProcessThermistorMooring, grid_thermistors  # noqa: F401
 
 _GRIDDING_KEYS = {"dt", "max_gap", "chunk"}
+
+_OFFSET_CRUISE_RE = re.compile(r"(cruise\d+)")
+
+
+def load_cal_offsets(path):
+    """Load a CTD cal-offsets NetCDF into one DataArray indexed by ``sn``.
+
+    Promoted from MOTIVE notebook 02's ``load_offsets``. The aggregated
+    offsets file (written by the CTD-cal notebook) carries a per-sensor
+    ``cast`` coord; it is propagated as ``source_cast`` and a
+    ``source_cruise`` coord is parsed from the filename so per-sensor
+    provenance survives into the L1 attrs. Returns ``None`` when ``path``
+    is absent, so a missing post-deployment side does not raise.
+
+    Parameters
+    ----------
+    path : pathlib.Path or str
+        Offsets NetCDF with an ``offset`` data variable and ``sn`` /
+        ``cast`` coordinates.
+
+    Returns
+    -------
+    xr.DataArray or None
+        Per-sensor offsets indexed by ``sn`` (sorted), with
+        ``source_cruise`` / ``source_cast`` coords; ``None`` if absent.
+    """
+    path = Path(path)
+    if not path.exists():
+        return None
+    ds = xr.load_dataset(path)
+    m = _OFFSET_CRUISE_RE.search(path.name)
+    cruise = m.group(1) if m else "unknown"
+    a = ds["offset"].copy()
+    a = a.assign_coords(
+        source_cruise=("sn", [cruise] * a.sizes["sn"]),
+        source_cast=("sn", ds["cast"].values.astype(int)),
+    )
+    return a.sortby("sn")
 
 
 def parse_gridding(block, defaults=None):

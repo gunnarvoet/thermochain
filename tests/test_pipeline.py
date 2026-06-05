@@ -146,3 +146,29 @@ def test_ignore_sns_handles_string_exclude(segmented_mooring):
 def test_parse_gridding_raises_on_missing_required_keys():
     with pytest.raises(ValueError, match="missing required keys"):
         parse_gridding({"dt": "2s"})
+
+
+from thermodrift.pipeline import load_cal_offsets  # noqa: E402
+
+
+def _write_offsets(path, sns, offsets, casts, cruise_in_name="cruise1"):
+    ds = xr.Dataset(
+        {"offset": ("sn", offsets)},
+        coords={"sn": list(sns), "cast": ("sn", list(casts))},
+    )
+    fpath = path / f"motive_{cruise_in_name}_cal_offsets.nc"
+    ds.to_netcdf(fpath)
+    return fpath
+
+
+def test_load_cal_offsets_indexed_sorted_with_provenance(tmp_path):
+    fpath = _write_offsets(tmp_path, sns=[333, 111, 222], offsets=[0.3, 0.1, 0.2], casts=[2, 1, 1])
+    a = load_cal_offsets(fpath)
+    assert list(a.sn.values) == [111, 222, 333]          # sorted by sn
+    assert float(a.sel(sn=222).data) == 0.2
+    assert str(a.sel(sn=111).source_cruise.item()) == "cruise1"
+    assert int(a.sel(sn=333).source_cast.item()) == 2
+
+
+def test_load_cal_offsets_missing_file_returns_none(tmp_path):
+    assert load_cal_offsets(tmp_path / "does_not_exist.nc") is None
