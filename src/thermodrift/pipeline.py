@@ -773,6 +773,7 @@ class Mooring(ProcessThermistorMooring):
                 part = offsets.assign_coords(
                     cast=("sn", np.full(n_sn, cast_no, dtype=int)),
                     cal_temp=("sn", np.full(n_sn, temp)),
+                    temp=("sn", np.full(n_sn, temp)),
                 )
                 parts.append(part)
                 ctd.close()

@@ -744,6 +744,8 @@ def test_compute_ctd_offsets_writes_both_files(ctd_cal_mooring):
     pre = xr.open_dataset(m._offsets_out_path("pre"))
     assert list(pre.data_vars) == ["offset"]
     assert set(pre.coords) >= {"sn", "cast", "cal_temp"}
+    assert "temp" in pre.coords
+    np.testing.assert_array_equal(pre.temp.values, pre.cal_temp.values)
     assert list(pre.sn.values) == sorted(pre.sn.values.tolist())   # sorted by sn
     assert set(int(c) for c in pre.cast.values) == {1, 4}
     post = xr.open_dataset(m._offsets_out_path("post"))
