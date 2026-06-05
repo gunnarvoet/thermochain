@@ -21,3 +21,36 @@ def test_parse_gridding_merges_defaults():
 def test_parse_gridding_rejects_unknown_keys():
     with pytest.raises(ValueError, match="unknown gridding keys"):
         parse_gridding({"dt": "2s", "max_gpa": "10s"})
+
+
+import pandas as pd  # noqa: E402
+
+from thermodrift.pipeline import resolve_segment_sns  # noqa: E402
+
+
+def _mooring_df():
+    return pd.DataFrame(
+        {"type": ["rbr"] * 4, "depth": [100, 200, 300, 400], "segment": ["deep", "deep", "shallow", "shallow"]},
+        index=pd.Index([111, 222, 333, 444], name="SN"),
+    )
+
+
+def test_resolve_segment_by_column():
+    sns = resolve_segment_sns(_mooring_df(), {"segment": "deep"}, root=".")
+    assert sorted(sns) == [111, 222]
+
+
+def test_resolve_segment_by_explicit_sns():
+    sns = resolve_segment_sns(_mooring_df(), {"sns": [333, 444]}, root=".")
+    assert sorted(sns) == [333, 444]
+
+
+def test_resolve_segment_missing_column_raises():
+    df = _mooring_df().drop(columns="segment")
+    with pytest.raises(ValueError, match="requires a 'segment' column"):
+        resolve_segment_sns(df, {"segment": "deep"}, root=".")
+
+
+def test_resolve_segment_unknown_spec_raises():
+    with pytest.raises(ValueError, match="one of segment/sns/layout"):
+        resolve_segment_sns(_mooring_df(), {"foo": "bar"}, root=".")
