@@ -291,7 +291,7 @@ def test_status_summary_reports_l1_count(cal_mooring):
     assert m.status_summary().loc["deep", "l1"] == "2/2"
 
 
-from thermodrift.pipeline import DriftParameters  # noqa: E402
+from thermodrift.pipeline import correct_drift, DriftParameters  # noqa: E402
 
 
 def test_drift_parameters_defaults_mirror_sensor_drift():
@@ -501,3 +501,41 @@ def test_fit_drift_label_arg_overrides_drift_parameters_label(drift_mooring):
     m.fit_drift(drift_parameters={"fit_mode": "linear", "label": "ignored"}, label="winner")
     assert (aux / "drift_testproj_a_winner.nc").exists()
     assert not (aux / "drift_testproj_a_ignored.nc").exists()
+
+
+def test_correct_drift_subtracts_interpolated_drift():
+    times = np.arange(
+        np.datetime64("2024-11-22T00:00"),
+        np.datetime64("2024-11-24T00:00"),
+        np.timedelta64(1, "h"),
+    )
+    sensor = xr.DataArray(np.full(times.size, 5.0), dims="time", coords={"time": times})
+    # drift defined at two window centres (sn, time); linear 0 -> 1 over the 2 days
+    wtimes = np.array(
+        [np.datetime64("2024-11-22T00:00"), np.datetime64("2024-11-24T00:00")]
+    )
+    drift = xr.DataArray(
+        [[0.0, 1.0]], dims=("sn", "time"), coords={"sn": [301111], "time": wtimes}
+    )
+    out = correct_drift(sensor, 301111, drift)
+    # start: drift 0 -> unchanged
+    assert float(out.isel(time=0)) == pytest.approx(5.0)
+    # midpoint: drift 0.5 -> 5.0 - 0.5
+    assert float(out.sel(time="2024-11-23T00:00")) == pytest.approx(4.5)
+
+
+def test_correct_drift_extrapolates_before_first_window():
+    # sensor samples that start BEFORE the first drift window centre
+    times = np.array(
+        [np.datetime64("2024-11-21T18:00"), np.datetime64("2024-11-23T00:00")]
+    )
+    sensor = xr.DataArray([5.0, 5.0], dims="time", coords={"time": times})
+    wtimes = np.array(
+        [np.datetime64("2024-11-22T00:00"), np.datetime64("2024-11-24T00:00")]
+    )
+    drift = xr.DataArray(
+        [[0.0, 1.0]], dims=("sn", "time"), coords={"sn": [301111], "time": wtimes}
+    )
+    out = correct_drift(sensor, 301111, drift)
+    # the early sample extrapolates to a slightly negative drift (no NaN)
+    assert not np.isnan(float(out.isel(time=0)))

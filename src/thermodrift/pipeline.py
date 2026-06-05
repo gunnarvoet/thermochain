@@ -284,6 +284,37 @@ def drift_diag_bundle(sd, params, label):
     return bundle
 
 
+def correct_drift(sensor, sn, drift):
+    """Subtract a sensor's interpolated drift from its L1 series (L1 -> L2).
+
+    Promoted from MOTIVE notebook 06's notebook-local helper. ``drift`` is
+    the drift product already re-dimensioned to ``(sn, time)`` (window
+    centres on the ``time`` dim). The per-sensor drift is interpolated onto
+    the sensor's sample times and subtracted; ``fill_value="extrapolate"``
+    linearly extends the fit outside its window (e.g. the few hours at
+    deployment start before the first window centre) so the corrected
+    series has no NaN edge.
+
+    Parameters
+    ----------
+    sensor : xr.DataArray
+        Per-sensor L1 temperature series with a ``time`` coord.
+    sn : int
+        Serial number to select from ``drift``.
+    drift : xr.DataArray
+        Drift product with dims ``(sn, time)`` (i.e. already
+        ``swap_dims({"depth": "sn", "window": "time"})``-ed).
+
+    Returns
+    -------
+    xr.DataArray
+        ``sensor`` minus the interpolated per-sensor drift (the L2 series).
+    """
+    drifts = drift.sel(sn=sn)
+    driftsi = drifts.interp_like(sensor.time, kwargs=dict(fill_value="extrapolate"))
+    return sensor - driftsi
+
+
 def parse_gridding(block, defaults=None):
     """Validate a gridding block and convert dt/max_gap/chunk to np.timedelta64.
 
