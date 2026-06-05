@@ -105,3 +105,14 @@ def test_grid_l1_overwrite_forces_rewrite(segmented_mooring):
     m.grid_l1(segments=["deep"])
     summary = m.grid_l1(segments=["deep"], overwrite=True)
     assert summary["deep"]["written"] == 2
+
+
+def test_status_summary_reports_grid_progress(segmented_mooring):
+    m = Mooring(segmented_mooring)
+    before = m.status_summary()
+    assert before.loc["deep", "n"] == 3
+    assert before.loc["deep", "gridL1"] == "0/2"
+
+    m.grid_l1(segments=["deep"])
+    after = m.status_summary()
+    assert after.loc["deep", "gridL1"] == "2/2"

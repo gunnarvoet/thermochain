@@ -236,3 +236,29 @@ class Mooring(ProcessThermistorMooring):
                 del full
             summary[seg] = {"written": written, "skipped": skipped, "chunks": len(start_times)}
         return summary
+
+    def status_summary(self):
+        """Per-segment progress: expected sensor count and gridded-L1 chunk coverage.
+
+        Lazy scan of the grid dir on each call. Columns: ``n`` (sensors
+        after ignore_sns), ``gridL1`` (``present/expected`` chunks).
+
+        Returns
+        -------
+        pd.DataFrame
+            Index is segment name; columns are ``n`` (int) and
+            ``gridL1`` (str ``"present/expected"``).
+        """
+        grid_dir = self._grid_dir()
+        ignore = set(self._ignore_sns())
+        rows = []
+        for seg in self.segments_cfg:
+            gp = self.gridding[seg]
+            sns = [s for s in self.segment_sensors(seg).index if int(s) not in ignore]
+            n_chunks = len(
+                np.arange(self.cfg.start_time, self.cfg.end_time, gp["chunk"], dtype="datetime64[s]")
+            )
+            pattern = f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}_{seg}_L1_*.nc"
+            present = len(list(grid_dir.glob(pattern))) if grid_dir.exists() else 0
+            rows.append({"segment": seg, "n": len(sns), "gridL1": f"{present}/{n_chunks}"})
+        return pd.DataFrame(rows).set_index("segment")
