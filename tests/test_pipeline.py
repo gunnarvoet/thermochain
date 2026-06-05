@@ -85,13 +85,16 @@ import xarray as xr  # noqa: E402
 
 def test_grid_l1_writes_chunks_and_is_idempotent(segmented_mooring):
     m = Mooring(segmented_mooring)
-    grid_dir = Path(m.cfg.path.root) / "data" / "grid"
+    grid_root = Path(m.cfg.path.root) / "data" / "grid"
+    grid_dir = grid_root / "l1"
 
     summary = m.grid_l1(segments=["deep"])
     assert summary["deep"]["written"] == 2          # 4-day span / 2D chunk
     assert summary["deep"]["skipped"] == 0
     files = sorted(grid_dir.glob("testproj_mavs3_deep_L1_*.nc"))
     assert len(files) == 2
+    # chunks land in grid/l1/ (where fit_drift reads), not bare grid/
+    assert sorted(grid_root.glob("testproj_mavs3_deep_L1_*.nc")) == []
 
     da = xr.open_dataarray(files[0])
     assert da.sizes["depth"] == 3
@@ -130,7 +133,7 @@ def test_grid_l1_drops_sheet_excluded_sensor(segmented_mooring_excluded):
     cfgpath, excluded_sn = segmented_mooring_excluded
     m = Mooring(cfgpath)
     m.grid_l1(segments=["deep"])
-    grid_dir = Path(m.cfg.path.root) / "data" / "grid"
+    grid_dir = Path(m.cfg.path.root) / "data" / "grid" / "l1"
     da = xr.open_dataarray(sorted(grid_dir.glob("testproj_mavs3_deep_L1_*.nc"))[0])
     assert excluded_sn not in set(int(s) for s in da.sn.values)
     assert da.sizes["depth"] == 2   # 3 deep minus 1 excluded

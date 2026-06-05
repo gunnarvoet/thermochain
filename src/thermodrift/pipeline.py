@@ -955,20 +955,17 @@ class Mooring(ProcessThermistorMooring):
         return d
 
     def _gridl1_dir(self):
-        """Directory holding gridded-L1 chunks (the drift-fit input).
+        """Directory holding gridded-L1 chunks (``grid/l1/``; the drift-fit input).
 
-        The on-disk layout (and notebook 03 / 05a) places gridded L1 under
-        ``grid/l1/``; see the plan's "Drift input directory" note.
+        Both :meth:`grid_l1` (writer) and :meth:`fit_drift` (reader) resolve
+        here, matching the on-disk layout from notebook 03 / 05a.
         """
         return self._grid_dir() / "l1"
 
     def _gridl2_dir(self):
         """Directory holding gridded-L2 chunks (``grid/l2/``).
 
-        Mirrors :meth:`_gridl1_dir`. NB: ``grid_l1`` currently writes to the
-        bare ``_grid_dir()`` (``grid/``) rather than ``grid/l1/`` — a
-        pre-existing Phase-1 wrinkle left for the reorg phase. ``grid_l2``
-        writes correctly into ``grid/l2/``.
+        Mirrors :meth:`_gridl1_dir`; :meth:`grid_l2` writes here.
         """
         return self._grid_dir() / "l2"
 
@@ -1223,7 +1220,7 @@ class Mooring(ProcessThermistorMooring):
         dict
             ``{segment: {"written": int, "skipped": int, "chunks": int}}``.
         """
-        grid_dir = self._grid_dir()
+        grid_dir = self._gridl1_dir()
         grid_dir.mkdir(parents=True, exist_ok=True)
         procl1 = Path(self.cfg.path.data.procl1)
         summary = {}
@@ -1373,7 +1370,7 @@ class Mooring(ProcessThermistorMooring):
         pd.DataFrame
             Index is segment name.
         """
-        grid_dir = self._grid_dir()
+        grid_dir = self._gridl1_dir()
         gridl2_dir = self._gridl2_dir()
         l1dir = self._procl1_dir()
         l2dir = self._procl2_dir()
