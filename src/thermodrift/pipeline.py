@@ -84,3 +84,86 @@ def resolve_segment_sns(mooring_info, select, root):
         layout_path = Path(root).joinpath(select["layout"])
         return pd.Index([int(s) for s in pd.read_csv(layout_path)["SN"]], name="SN")
     raise ValueError(f"segment select needs one of segment/sns/layout: {select!r}")
+
+
+class Mooring(ProcessThermistorMooring):
+    """Config-driven moored-thermistor pipeline for one mooring.
+
+    Extends the L0 processing base with segment resolution and the
+    gridding stage. Built from a single YAML config (see the schema in
+    plans/generalize-thermistor-pipeline.md).
+    """
+
+    def __init__(self, config_file, project_root=None, data_root=None):
+        """Initialize the Mooring pipeline.
+
+        Parameters
+        ----------
+        config_file : pathlib.Path or str
+            YAML config file for this mooring.
+        project_root : pathlib.Path or None, optional
+            Forwarded to ``load_config_box``; defaults to
+            ``configfile.parent.parent``.
+        data_root : pathlib.Path or None, optional
+            Forwarded to ``load_config_box``.
+        """
+        super().__init__(config_file, project_root=project_root, data_root=data_root)
+        self.segments_cfg = {
+            name: dict(seg)
+            for name, seg in (self.cfg.get("segments", {}) or {}).items()
+        }
+        default_grid = dict(self.cfg.get("gridding", {}) or {})
+        self.gridding = {
+            name: parse_gridding(seg.get("gridding"), defaults=default_grid)
+            for name, seg in self.segments_cfg.items()
+        }
+
+    def _segment_names(self, segments):
+        """Validate and return a list of segment names.
+
+        Parameters
+        ----------
+        segments : str, list of str, or None
+            Segment(s) to validate. ``None`` returns all defined segments.
+
+        Returns
+        -------
+        list of str
+        """
+        if segments is None:
+            return list(self.segments_cfg)
+        if isinstance(segments, str):
+            segments = [segments]
+        for s in segments:
+            if s not in self.segments_cfg:
+                raise KeyError(f"unknown segment {s!r}; defined: {list(self.segments_cfg)}")
+        return list(segments)
+
+    def _ignore_sns(self):
+        """Return the configured ignore_sns list as integers.
+
+        Returns
+        -------
+        list of int
+        """
+        return [int(s) for s in (self.cfg.get("ignore_sns", []) or [])]
+
+    def segment_sensors(self, segment):
+        """Return mooring_info rows for one segment (structural selection only).
+
+        Parameters
+        ----------
+        segment : str
+            Segment name as defined in the config ``segments`` block.
+
+        Returns
+        -------
+        pd.DataFrame
+            Subset of ``mooring_info`` whose SNs belong to ``segment``.
+        """
+        sns = resolve_segment_sns(
+            self.mooring_info,
+            self.segments_cfg[segment]["select"],
+            self.cfg.path.root,
+        )
+        return self.mooring_info.loc[self.mooring_info.index.intersection(sns)]

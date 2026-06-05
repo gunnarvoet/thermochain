@@ -54,3 +54,25 @@ def test_resolve_segment_missing_column_raises():
 def test_resolve_segment_unknown_spec_raises():
     with pytest.raises(ValueError, match="one of segment/sns/layout"):
         resolve_segment_sns(_mooring_df(), {"foo": "bar"}, root=".")
+
+
+import numpy as np  # noqa: E402 (already imported above, idempotent)
+
+import thermodrift  # noqa: E402
+from thermodrift.pipeline import Mooring  # noqa: E402
+
+
+def test_mooring_exported_at_package_root():
+    assert thermodrift.Mooring is Mooring
+
+
+def test_mooring_parses_segments_and_gridding(segmented_mooring):
+    m = Mooring(segmented_mooring)
+    assert set(m.segments_cfg) == {"deep", "shallow"}
+    assert m.gridding["deep"]["dt"] == np.timedelta64(10, "s")
+    assert m.gridding["shallow"]["chunk"] == np.timedelta64(2, "D")
+
+
+def test_mooring_segment_sensors_returns_three_deep(segmented_mooring):
+    m = Mooring(segmented_mooring)
+    assert len(m.segment_sensors("deep")) == 3

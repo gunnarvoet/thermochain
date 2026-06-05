@@ -103,5 +103,6 @@ __author__ = """Gunnar Voet"""
 __email__ = "gvoet@ucsd.edu"
 __version__ = "2023.12.0"
 
-__all__ = ["io", "plot"]
-from . import io, plot
+__all__ = ["io", "plot", "pipeline", "Mooring"]
+from . import io, pipeline, plot
+from .pipeline import Mooring
