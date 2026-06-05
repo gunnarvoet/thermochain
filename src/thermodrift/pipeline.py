@@ -878,21 +878,24 @@ class Mooring(ProcessThermistorMooring):
         return pd.DataFrame(rows).set_index("sn")
 
     def status_summary(self):
-        """Per-segment progress: sensor count, L1 coverage, gridded-L1 chunk coverage.
+        """Per-segment progress: sensor count, L1, gridded-L1, and drift products.
 
-        Lazy scan of the L1 and grid dirs on each call. Columns: ``n``
+        Lazy scan of the L1 / grid / aux dirs on each call. Columns: ``n``
         (sensors after ignore_sns), ``l1`` (``present/n`` per-sensor L1),
-        ``gridL1`` (``present/expected`` chunks).
+        ``gridL1`` (``present/expected`` chunks), ``drift`` (comma-joined
+        labels present, or ``-`` for non-drift segments / none fit yet).
 
         Returns
         -------
         pd.DataFrame
-            Index is segment name; columns ``n`` (int), ``l1`` (str),
-            ``gridL1`` (str ``"present/expected"``).
+            Index is segment name.
         """
         grid_dir = self._grid_dir()
         l1dir = self._procl1_dir()
+        aux = self._aux_dir()
         ignore = set(self._ignore_sns())
+        drift_segments = set(self._drift_segments())
+        mooring_id = f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}"
         rows = []
         for seg in self.segments_cfg:
             gp = self.gridding[seg]
@@ -904,12 +907,21 @@ class Mooring(ProcessThermistorMooring):
             n_chunks = len(
                 np.arange(self.cfg.start_time, self.cfg.end_time, gp["chunk"], dtype="datetime64[s]")
             )
-            pattern = f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}_{seg}_L1_*.nc"
+            pattern = f"{mooring_id}_{seg}_L1_*.nc"
             present = len(list(grid_dir.glob(pattern))) if grid_dir.exists() else 0
+            if seg in drift_segments and aux.exists():
+                labels = sorted(
+                    p.name[len(f"drift_{mooring_id}_"):-3]
+                    for p in aux.glob(f"drift_{mooring_id}_*.nc")
+                )
+                drift = ", ".join(labels) if labels else "-"
+            else:
+                drift = "-"
             rows.append({
                 "segment": seg,
                 "n": len(sns),
                 "l1": f"{l1_present}/{len(sns)}",
                 "gridL1": f"{present}/{n_chunks}",
+                "drift": drift,
             })
         return pd.DataFrame(rows).set_index("segment")

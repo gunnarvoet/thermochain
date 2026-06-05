@@ -479,3 +479,15 @@ def test_fit_drift_idempotent_then_overwrite(drift_mooring):
     assert second["deep"] is None
     third = m.fit_drift(overwrite=True)       # forced refit -> sd returned
     assert third["deep"] is not None
+
+
+def test_status_summary_drift_column(drift_mooring):
+    m = Mooring(drift_mooring)
+    before = m.status_summary()
+    assert before.loc["deep", "drift"] == "-"        # nothing fit yet
+    assert before.loc["shallow", "drift"] == "-"     # non-drift segment
+
+    m.fit_drift()                                     # writes label "testfit"
+    after = m.status_summary()
+    assert "testfit" in after.loc["deep", "drift"]
+    assert after.loc["shallow", "drift"] == "-"
