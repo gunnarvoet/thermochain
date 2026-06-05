@@ -63,6 +63,10 @@ filterwarnings = [
     # the module works at runtime. Triggered via gvpy.trilaterate
     # importing netCDF4 at module load.
     'ignore:numpy\.ndarray size changed:RuntimeWarning',
+    # the unchanged sensor_drift primitive uses xarray's GroupBy.apply in
+    # remove_outliers; xarray emits a PendingDeprecationWarning we do not
+    # want escalated to an error inside fit_drift's real fit.
+    'ignore:GroupBy\.apply may be deprecated:PendingDeprecationWarning',
 ]
 
 [tool.pdm]

@@ -15,6 +15,7 @@ from .io import (  # noqa: F401
     logger,
     rbr_cut_and_cal,
     rbr_cut_and_cal_interp,
+    sensor_drift,
 )
 
 _GRIDDING_KEYS = {"dt", "max_gap", "chunk"}
@@ -632,6 +633,141 @@ class Mooring(ProcessThermistorMooring):
         if eff == "scalar":
             return eff, pre_has, (post_has and not pre_has)
         return eff, False, False  # "none" or "empty"
+
+    def _aux_dir(self):
+        d = Path(self.cfg.path.aux)
+        if not d.is_absolute():
+            d = Path(self.cfg.path.root) / d
+        return d
+
+    def _gridl1_dir(self):
+        """Directory holding gridded-L1 chunks (the drift-fit input).
+
+        The on-disk layout (and notebook 03 / 05a) places gridded L1 under
+        ``grid/l1/``; see the plan's "Drift input directory" note.
+        """
+        return self._grid_dir() / "l1"
+
+    def _drift_segments(self):
+        """Segment names flagged ``drift: true`` in the config."""
+        return [name for name, seg in self.segments_cfg.items() if seg.get("drift")]
+
+    def _drift_segment_names(self, segments):
+        """Validate ``segments`` against the drift-eligible set."""
+        drift = self._drift_segments()
+        if segments is None:
+            return drift
+        names = [segments] if isinstance(segments, str) else list(segments)
+        for s in names:
+            if s not in self.segments_cfg:
+                raise KeyError(f"unknown segment {s!r}; defined: {list(self.segments_cfg)}")
+            if s not in drift:
+                raise ValueError(
+                    f"segment {s!r} is not a drift segment (set drift: true to enable)"
+                )
+        return names
+
+    def fit_drift(
+        self, segments=None, drift_parameters=None, label=None,
+        gridl1_dir=None, first_n_chunks=None,
+        window_length=np.timedelta64(1, "D"), overwrite=False,
+    ):
+        """Run the CvHG16 drift fit on the ``drift: true`` segments.
+
+        Wraps the unchanged :class:`thermodrift.io.sensor_drift`
+        (``run_all=True``) + ``drift_to_netcdf`` primitives. For each drift
+        segment it fits the gridded-L1 deep array, writes the drift product
+        ``drift_{project}_{mooring}_{label}.nc`` and the diagnostic bundle
+        ``diag_{project}_{mooring}_{label}.nc`` (both in ``path.aux``), and
+        stamps the full validated ``drift_parameters`` as provenance attrs.
+
+        The base ``drift_parameters`` come from the config block; a ``label``
+        there (or ``label=``) names the product. Pass ``drift_parameters=``
+        and ``label=`` to write side-by-side sweeps (e.g. ``lin`` vs
+        ``slowtau``) without editing the YAML. Unknown parameter keys are
+        rejected via :class:`DriftParameters` (typo guard).
+
+        Idempotent: a segment whose drift + diag products already exist is
+        skipped (its return value is ``None``) unless ``overwrite=True``.
+
+        .. note::
+           Holding two fitted ``sensor_drift`` instances live at once can
+           segfault xarray's groupby C-state (documented in notebook 05a).
+           When sweeping labels, drop the returned object (``del``; ``gc``)
+           before the next ``fit_drift`` call.
+
+        Parameters
+        ----------
+        segments : str, list of str, or None, optional
+            Drift segment(s). ``None`` runs all ``drift: true`` segments.
+        drift_parameters : dict or None, optional
+            Overrides merged over the config block (may include ``label``).
+        label : str or None, optional
+            Product label; overrides the config / ``drift_parameters`` label.
+        gridl1_dir : pathlib.Path or None, optional
+            Gridded-L1 input dir; defaults to :meth:`_gridl1_dir`.
+        first_n_chunks : int or None, optional
+            Cap on gridded-L1 chunks read (``None`` = all).
+        window_length : np.timedelta64, optional
+            Background-fit window length. Default 1 day.
+        overwrite : bool, optional
+            Refit even if the products exist. Default ``False``.
+
+        Returns
+        -------
+        dict
+            ``{segment: sensor_drift | None}`` (``None`` where skipped).
+        """
+        base = dict(self.cfg.get("drift_parameters", {}) or {})
+        label = label or base.pop("label", None)
+        if drift_parameters:
+            override = dict(drift_parameters)
+            label = override.pop("label", None) or label
+            base.pop("label", None)
+            base.update(override)
+        else:
+            base.pop("label", None)
+        if label is None:
+            raise ValueError(
+                "fit_drift needs a label (config drift_parameters.label or label=)"
+            )
+        params = DriftParameters.from_dict(base)   # validates + rejects unknown keys
+
+        aux = self._aux_dir()
+        aux.mkdir(parents=True, exist_ok=True)
+        gridl1_dir = Path(gridl1_dir) if gridl1_dir is not None else self._gridl1_dir()
+        mooring_id = f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}"
+
+        results = {}
+        for seg in self._drift_segment_names(segments):
+            drift_path = aux / f"drift_{mooring_id}_{label}.nc"
+            diag_path = aux / f"diag_{mooring_id}_{label}.nc"
+            if drift_path.exists() and diag_path.exists() and not overwrite:
+                logger.info(f"{seg}: drift products for {label!r} exist, skipping")
+                results[seg] = None
+                continue
+
+            file_pattern = f"{mooring_id}_{seg}_L1_*.nc"
+            sd = sensor_drift(
+                mooring_name=mooring_id,
+                l1_grid_dir=gridl1_dir,
+                file_pattern=file_pattern,
+                window_length=window_length,
+                drift_parameters=params.as_dict(),
+                first_n_chunks=first_n_chunks,
+                run_all=True,
+            )
+            sd.drift_to_netcdf(path=aux, suffix=label)
+            self._stamp_drift_provenance(drift_path, params, label)
+            drift_diag_bundle(sd, params, label).to_netcdf(diag_path, mode="w")
+            results[seg] = sd
+        return results
+
+    def _stamp_drift_provenance(self, drift_path, params, label):
+        """Re-open the drift product and add the provenance attrs in place."""
+        da = xr.load_dataarray(drift_path)
+        da.attrs.update(drift_provenance_attrs(params, label))
+        da.to_netcdf(drift_path, mode="w")
 
     def _grid_dir(self):
         d = Path(self.cfg.path.data.grid)

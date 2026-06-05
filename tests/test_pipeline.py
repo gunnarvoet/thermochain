@@ -429,3 +429,53 @@ def test_drift_diag_bundle_auto_includes_exp_vars():
     assert bundle.attrs["tau_bounds_lo"] == 5.0
     assert bundle.attrs["tau_bounds_hi"] == 180.0
     np.testing.assert_array_equal(bundle.attrs["flagged_outlier_sns"], np.array([236109, 236127]))
+
+
+def test_fit_drift_writes_products_and_returns_sensor_drift(drift_mooring):
+    m = Mooring(drift_mooring)
+    aux = Path(m.cfg.path.root) / "data" / "aux"
+
+    out = m.fit_drift()                       # config default: label=testfit, deep only
+    assert set(out) == {"deep"}
+    sd = out["deep"]
+    assert isinstance(sd, thermodrift.io.sensor_drift)   # returned for diagnostics
+
+    drift_f = aux / "drift_testproj_a_testfit.nc"
+    diag_f = aux / "diag_testproj_a_testfit.nc"
+    assert drift_f.exists() and diag_f.exists()
+
+    da = xr.open_dataarray(drift_f)
+    assert da.attrs["drift_label"] == "testfit"
+    assert da.attrs["drift_param_fit_mode"] == "linear"
+    assert "window" in da.dims and "depth" in da.dims
+
+
+def test_fit_drift_skips_non_drift_segments(drift_mooring):
+    m = Mooring(drift_mooring)
+    # shallow has no drift: true -> requesting it is an error
+    with pytest.raises(ValueError, match="not a drift segment"):
+        m.fit_drift(segments=["shallow"])
+
+
+def test_fit_drift_label_and_param_override(drift_mooring):
+    m = Mooring(drift_mooring)
+    aux = Path(m.cfg.path.root) / "data" / "aux"
+    m.fit_drift(drift_parameters={"fit_mode": "linear"}, label="alt")
+    assert (aux / "drift_testproj_a_alt.nc").exists()
+    assert (aux / "diag_testproj_a_alt.nc").exists()
+
+
+def test_fit_drift_rejects_unknown_param_key(drift_mooring):
+    m = Mooring(drift_mooring)
+    with pytest.raises(ValueError, match="unknown drift_parameters keys"):
+        m.fit_drift(drift_parameters={"spline_smoothh": 1e-6}, label="bad")
+
+
+def test_fit_drift_idempotent_then_overwrite(drift_mooring):
+    m = Mooring(drift_mooring)
+    first = m.fit_drift()
+    assert first["deep"] is not None
+    second = m.fit_drift()                    # products exist -> skip, sd is None
+    assert second["deep"] is None
+    third = m.fit_drift(overwrite=True)       # forced refit -> sd returned
+    assert third["deep"] is not None

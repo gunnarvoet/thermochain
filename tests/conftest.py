@@ -382,3 +382,115 @@ def cal_mooring(tmp_path):
     with open(cfgpath, "w") as f:
         yaml.safe_dump(cfg, f)
     return cfgpath
+
+
+@pytest.fixture
+def drift_mooring(tmp_path):
+    """Self-contained mooring for fit_drift: config + sheets + synthetic gridded-L1 deep chunks.
+
+    Six deep sensors over 8 days at 1 min, written as four 2-day chunks under
+    grid/l1/ named like grid_l1 output (testproj_a_deep_L1_<stamp>.nc). One
+    shallow sensor exists but its segment is not a drift segment. Returns the
+    config path.
+    """
+    deep_sns = [301111, 301222, 301333, 301444, 301555, 301666]
+    shallow_sns = [302777]
+    all_sns = deep_sns + shallow_sns
+
+    data = tmp_path / "data"
+    gridl1 = data / "grid" / "l1"
+    gridl1.mkdir(parents=True)
+    (data / "aux").mkdir(parents=True)
+
+    # sheets — raw column names; sensor_sheet_load renames + dt64-casts the
+    # time/CTD-cal columns, so they must be present for Mooring(...) to build.
+    pd.DataFrame([
+        {
+            "SN": sn,
+            "Type": "RBR Solo",
+            "Pre-Deployment CTD Calibration Time": "2024-11-20 12:00:00",
+            "Pre-Deployment CTD Calibration Cast": 1,
+            "Post-Deployment CTD Calibration Time": "2024-12-02 12:00:00",
+            "Post-Deployment CTD Calibration Cast": 5,
+            "Pre-Deployment Time Calibration": "2024-11-18 10:00:00",
+            "Post-Deployment Time Calibration": "2024-12-05 10:00:00",
+            "Post-Deployment UTC Time": "2024-12-05 10:00:00",
+            "Post-Deployment Logger Time": "2024-12-05 10:00:05",
+            "exclude": 0,
+        }
+        for sn in all_sns
+    ]).to_csv(data / "sensor_sheet.csv", index=False)
+    moor_rows = (
+        [{"type": "RBR Solo", "SN": sn, "depth": 4300.0 - 4.0 * i, "segment": "deep"}
+         for i, sn in enumerate(deep_sns)]
+        + [{"type": "RBR Solo", "SN": sn, "depth": 2000.0, "segment": "shallow"}
+           for sn in shallow_sns]
+    )
+    pd.DataFrame(moor_rows).to_csv(data / "mooring_sheet.csv", index=False)
+
+    # synthetic gridded-L1 deep array: dims (depth, time), sn coord on depth
+    start = np.datetime64("2024-11-22T00:00")
+    end = np.datetime64("2024-11-30T00:00")
+    times = np.arange(start, end, np.timedelta64(1, "m"))
+    depths = [4300.0 - 4.0 * i for i in range(len(deep_sns))]
+    elapsed_d = (times - start) / np.timedelta64(1, "D")
+    # smooth background in depth + time + a tiny per-sensor linear drift
+    rows = []
+    for i, _sn in enumerate(deep_sns):
+        base = 4.0 - 0.001 * i + 1e-3 * np.sin(elapsed_d / 1.5)
+        drift = 1e-4 * i * elapsed_d
+        rows.append(base + drift)
+    full = xr.DataArray(
+        np.vstack(rows),
+        dims=("depth", "time"),
+        coords={"depth": depths, "time": times, "sn": ("depth", deep_sns)},
+        name="t",
+    )
+    full.attrs.update({"units": "°C", "long_name": "temperature"})
+    # real gridded-L1 deep arrays are depth-ascending; the background spline
+    # fit (UnivariateSpline over depth) requires monotonic-increasing depth.
+    full = full.sortby("depth")
+    chunk = np.timedelta64(2, "D")
+    for ti in np.arange(start, end, chunk, dtype="datetime64[s]"):
+        stamp = np.datetime_as_string(np.datetime64(ti, "s")).replace("-", "").replace(":", "")
+        # half-open [ti, ti+chunk) like real grid_l1 chunks; an inclusive slice
+        # duplicates the boundary-midnight sample into two chunks and skews the
+        # per-window mean off a whole second (un-serialisable by the nc3 writer).
+        sub = full.sel(time=slice(ti, ti + chunk - np.timedelta64(1, "ns")))
+        sub.to_netcdf(gridl1 / f"testproj_a_deep_L1_{stamp}.nc")
+
+    cfg = {
+        "info": "drift test",
+        "meta": {"mooring_name": "A", "project": "TestProj", "PI": "x", "email": "x"},
+        "path": {
+            "fig": "fig/",
+            "data": {"raw": {"rbr": "data/raw/", "sbe": "data/raw/"},
+                     "proc": "data/proc/", "grid": "data/grid/"},
+            "sensors": "data/sensor_sheet.csv",
+            "mooring": "data/mooring_sheet.csv",
+            "aux": "data/aux/",
+        },
+        "start_time": "2024-11-22 00:00:00",
+        "end_time": "2024-11-30 00:00:00",
+        "ignore_sns": [],
+        "gridding": {"dt": "10s", "max_gap": "30s", "chunk": "2D"},
+        "segments": {
+            "deep": {"select": {"segment": "deep"}, "drift": True},
+            "shallow": {"select": {"segment": "shallow"}},
+        },
+        "drift_parameters": {
+            "label": "testfit",
+            "exclude": 1.0e-3,
+            "polydeg": 2,
+            "outliers_polydeg": 2,
+            "use_spline": False,
+            "fit_mode": "linear",
+            "iterate_subtract": False,
+        },
+    }
+    cfgdir = tmp_path / "run"
+    cfgdir.mkdir()
+    cfgpath = cfgdir / "config.yml"
+    with open(cfgpath, "w") as f:
+        yaml.safe_dump(cfg, f)
+    return cfgpath
