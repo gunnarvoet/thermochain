@@ -289,3 +289,51 @@ def test_status_summary_reports_l1_count(cal_mooring):
     assert m.status_summary().loc["deep", "l1"] == "0/2"
     m.cut_and_cal(segments=["deep"])
     assert m.status_summary().loc["deep", "l1"] == "2/2"
+
+
+from thermodrift.pipeline import DriftParameters  # noqa: E402
+
+
+def test_drift_parameters_defaults_mirror_sensor_drift():
+    dp = DriftParameters()
+    assert dp.fit_mode == "auto"
+    assert dp.iterate_mode == "restore"
+    assert dp.polydeg == 8
+    assert dp.use_spline is False
+    assert dp.tau0 == 20.0
+    assert dp.manual_outlier_sns == []
+
+
+def test_drift_parameters_from_dict_merges_overrides():
+    dp = DriftParameters.from_dict({"fit_mode": "linear", "spline_smooth": 5e-6})
+    assert dp.fit_mode == "linear"
+    assert dp.spline_smooth == 5e-6
+    # untouched key keeps its default
+    assert dp.outliers_polydeg == 8
+
+
+def test_drift_parameters_rejects_unknown_keys():
+    with pytest.raises(ValueError, match="unknown drift_parameters keys"):
+        DriftParameters.from_dict({"spline_smoothh": 5e-6})
+
+
+def test_drift_parameters_rejects_bad_fit_mode():
+    with pytest.raises(ValueError, match="fit_mode must be"):
+        DriftParameters.from_dict({"fit_mode": "quadratic"})
+
+
+def test_drift_parameters_rejects_bad_iterate_mode():
+    with pytest.raises(ValueError, match="iterate_mode must be"):
+        DriftParameters.from_dict({"iterate_mode": "blend"})
+
+
+def test_drift_parameters_as_dict_roundtrips_for_sensor_drift():
+    dp = DriftParameters.from_dict({"fit_mode": "linear", "manual_outlier_sns": [236109]})
+    d = dp.as_dict()
+    assert d["fit_mode"] == "linear"
+    assert d["manual_outlier_sns"] == [236109]
+    assert set(d) == {
+        "exclude", "polydeg", "outliers_polydeg", "use_spline", "spline_smooth",
+        "exclude_sn", "tau0", "tau_bounds", "beta_bounds", "fit_mode",
+        "iterate_subtract", "iterate_mode", "amplitude_threshold_mK", "manual_outlier_sns",
+    }

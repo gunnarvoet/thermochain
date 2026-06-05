@@ -2,6 +2,7 @@
 """Config-driven Mooring pipeline orchestration over thermodrift primitives."""
 
 import re
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 import numpy as np  # noqa: F401
@@ -116,6 +117,86 @@ def cal_diagnostic_attrs(
     attrs.update(_one("pre_cal", ctdcal_pre, pre_applied, t_pre))
     attrs.update(_one("post_cal", ctdcal_post, post_applied, t_post))
     return attrs
+
+
+_DRIFT_FIT_MODES = ("linear", "auto", "exp")
+_DRIFT_ITERATE_MODES = ("restore", "refit")
+
+
+@dataclass
+class DriftParameters:
+    """Typed, validated CvHG16 drift-fit parameters.
+
+    Field names and defaults mirror
+    :meth:`thermodrift.io.sensor_drift.parse_drift_parameters` exactly, so a
+    ``DriftParameters().as_dict()`` reproduces today's defaults. Unlike the
+    loose ``setattr`` loop in the primitive, :meth:`from_dict` **rejects
+    unknown keys** (a YAML typo like ``spline_smoothh`` raises instead of
+    silently falling back to the default - big-picture stretch-cleanup
+    Item A, enforced at the pipeline boundary).
+
+    The pipeline-level ``label`` (drift-product filename key) is handled
+    separately by :meth:`Mooring.fit_drift` and is *not* a field here.
+    """
+
+    exclude: object = field(default_factory=lambda: [1e-2, 5e-3])
+    polydeg: int = 8
+    outliers_polydeg: int = 8
+    use_spline: bool = False
+    spline_smooth: float = 2e-4
+    exclude_sn: object = None
+    tau0: float = 20.0
+    tau_bounds: object = field(default_factory=lambda: (5.0, 180.0))
+    beta_bounds: object = field(default_factory=lambda: (1.0 / 3.0, 3.0))
+    fit_mode: str = "auto"
+    iterate_subtract: bool = False
+    iterate_mode: str = "restore"
+    amplitude_threshold_mK: float = 1.5
+    manual_outlier_sns: list = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.fit_mode not in _DRIFT_FIT_MODES:
+            raise ValueError(
+                f"fit_mode must be one of {_DRIFT_FIT_MODES}; got {self.fit_mode!r}"
+            )
+        if self.iterate_mode not in _DRIFT_ITERATE_MODES:
+            raise ValueError(
+                f"iterate_mode must be one of {_DRIFT_ITERATE_MODES}; got {self.iterate_mode!r}"
+            )
+
+    @classmethod
+    def from_dict(cls, params):
+        """Build from a dict, rejecting any key not a recognised field.
+
+        Parameters
+        ----------
+        params : dict or None
+            Raw ``drift_parameters`` (config block UNION caller override),
+            with the pipeline-level ``label`` already removed.
+
+        Returns
+        -------
+        DriftParameters
+
+        Raises
+        ------
+        ValueError
+            If ``params`` contains a key outside the dataclass fields, or
+            ``fit_mode`` / ``iterate_mode`` is invalid.
+        """
+        params = dict(params or {})
+        known = {f.name for f in fields(cls)}
+        unknown = set(params) - known
+        if unknown:
+            raise ValueError(
+                f"unknown drift_parameters keys: {sorted(unknown)} "
+                f"(allowed: {sorted(known)})"
+            )
+        return cls(**params)
+
+    def as_dict(self):
+        """Return a plain dict suitable for ``sensor_drift(drift_parameters=…)``."""
+        return asdict(self)
 
 
 def parse_gridding(block, defaults=None):
