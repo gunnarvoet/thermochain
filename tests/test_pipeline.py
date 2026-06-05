@@ -132,3 +132,17 @@ def test_grid_l1_drops_sheet_excluded_sensor(segmented_mooring_excluded):
     da = xr.open_dataarray(sorted(grid_dir.glob("testproj_mavs3_deep_L1_*.nc"))[0])
     assert excluded_sn not in set(int(s) for s in da.sn.values)
     assert da.sizes["depth"] == 2   # 3 deep minus 1 excluded
+
+
+def test_ignore_sns_handles_string_exclude(segmented_mooring):
+    m = Mooring(segmented_mooring)
+    sn = int(m.segment_sensors("deep").index[0])
+    m.sensor_info = m.sensor_info.copy()
+    m.sensor_info["exclude"] = "0"
+    m.sensor_info.loc[sn, "exclude"] = "1"
+    assert sn in m._ignore_sns()
+
+
+def test_parse_gridding_raises_on_missing_required_keys():
+    with pytest.raises(ValueError, match="missing required keys"):
+        parse_gridding({"dt": "2s"})

@@ -24,12 +24,14 @@ def parse_gridding(block, defaults=None):
     Returns
     -------
     dict
-        Keys among {dt, max_gap, chunk} present after merge, as np.timedelta64.
+        All three required keys {dt, max_gap, chunk} as np.timedelta64.
 
     Raises
     ------
     ValueError
         If ``block`` contains a key outside {dt, max_gap, chunk}.
+    ValueError
+        If the merged result is missing any of the three required keys.
     """
     block = dict(block or {})
     unknown = set(block) - _GRIDDING_KEYS
@@ -37,7 +39,11 @@ def parse_gridding(block, defaults=None):
         raise ValueError(f"unknown gridding keys: {sorted(unknown)}")
     merged = dict(defaults or {})
     merged.update(block)
-    return {k: pd.Timedelta(v).to_timedelta64() for k, v in merged.items() if k in _GRIDDING_KEYS}
+    out = {k: pd.Timedelta(v).to_timedelta64() for k, v in merged.items() if k in _GRIDDING_KEYS}
+    missing = _GRIDDING_KEYS - set(out)
+    if missing:
+        raise ValueError(f"gridding is missing required keys: {sorted(missing)}")
+    return out
 
 
 def resolve_segment_sns(mooring_info, select, root):
@@ -153,7 +159,8 @@ class Mooring(ProcessThermistorMooring):
         """
         ignore = {int(s) for s in (self.cfg.get("ignore_sns", []) or [])}
         if "exclude" in self.sensor_info.columns:
-            ignore |= {int(s) for s in self.sensor_info.index[self.sensor_info["exclude"] == 1]}
+            flagged = pd.to_numeric(self.sensor_info["exclude"], errors="coerce") == 1
+            ignore |= {int(s) for s in self.sensor_info.index[flagged]}
         return sorted(ignore)
 
     def segment_sensors(self, segment):
