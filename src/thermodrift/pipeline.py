@@ -51,6 +51,66 @@ def load_cal_offsets(path):
     return a.sortby("sn")
 
 
+def cal_diagnostic_attrs(
+    sn, ctdcal_pre, ctdcal_post, *, cal_method, pre_applied, post_applied,
+    t_pre=None, t_post=None,
+):
+    """Build the flat L1 calibration-provenance attrs for one sensor.
+
+    Mirrors MOTIVE notebook 02's ``attach_diagnostic_offsets``: records
+    each side's offset / cruise / cast / cast-time when present in the
+    cal file (whether or not it was applied), and NaN + sentinels when
+    the sensor is absent from that side. ``cal_method`` is recorded
+    verbatim.
+
+    Parameters
+    ----------
+    sn : int
+        Sensor serial number.
+    ctdcal_pre, ctdcal_post : xr.DataArray or None
+        Per-sensor offsets indexed by ``sn`` with ``source_cruise`` /
+        ``source_cast`` coords (output of :func:`load_cal_offsets`).
+    cal_method : str
+        Effective calibration method recorded on the L1 file.
+    pre_applied, post_applied : bool
+        Whether each side's offset was actually applied to the series.
+    t_pre, t_post : datetime-like or None, optional
+        Cast times for the pre / post sides.
+
+    Returns
+    -------
+    dict
+        Flat attrs: ``cal_method`` plus ``{pre,post}_cal_{offset,applied,
+        cruise,cast,time}``.
+    """
+    def _one(prefix, ctdcal, applied, t_cal):
+        if ctdcal is not None and sn in ctdcal.sn:
+            sel = ctdcal.sel(sn=sn)
+            return {
+                f"{prefix}_offset": float(sel.data),
+                f"{prefix}_applied": int(applied),
+                f"{prefix}_cruise": str(sel.source_cruise.item()),
+                f"{prefix}_cast": int(sel.source_cast.item()),
+                f"{prefix}_time": (
+                    pd.Timestamp(t_cal).isoformat()
+                    if t_cal is not None and not pd.isna(t_cal)
+                    else ""
+                ),
+            }
+        return {
+            f"{prefix}_offset": float("nan"),
+            f"{prefix}_applied": 0,
+            f"{prefix}_cruise": "",
+            f"{prefix}_cast": -1,
+            f"{prefix}_time": "",
+        }
+
+    attrs = {"cal_method": cal_method}
+    attrs.update(_one("pre_cal", ctdcal_pre, pre_applied, t_pre))
+    attrs.update(_one("post_cal", ctdcal_post, post_applied, t_post))
+    return attrs
+
+
 def parse_gridding(block, defaults=None):
     """Validate a gridding block and convert dt/max_gap/chunk to np.timedelta64.
 

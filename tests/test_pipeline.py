@@ -172,3 +172,48 @@ def test_load_cal_offsets_indexed_sorted_with_provenance(tmp_path):
 
 def test_load_cal_offsets_missing_file_returns_none(tmp_path):
     assert load_cal_offsets(tmp_path / "does_not_exist.nc") is None
+
+
+from thermodrift.pipeline import cal_diagnostic_attrs  # noqa: E402
+
+
+def _offsets_da(sn=111, offset=0.15, cruise="cruise1", cast=1):
+    return xr.DataArray(
+        [offset],
+        dims="sn",
+        coords={
+            "sn": [sn],
+            "source_cruise": ("sn", [cruise]),
+            "source_cast": ("sn", [cast]),
+        },
+    )
+
+
+def test_cal_diagnostic_attrs_present_offset():
+    pre = _offsets_da(sn=111, offset=0.15, cruise="cruise1", cast=1)
+    attrs = cal_diagnostic_attrs(
+        111, pre, None, cal_method="scalar_pre_only",
+        pre_applied=True, post_applied=False,
+        t_pre=np.datetime64("2024-11-22T05:00"), t_post=None,
+    )
+    assert attrs["cal_method"] == "scalar_pre_only"
+    assert attrs["pre_cal_offset"] == 0.15
+    assert attrs["pre_cal_applied"] == 1
+    assert attrs["pre_cal_cruise"] == "cruise1"
+    assert attrs["pre_cal_cast"] == 1
+    assert attrs["pre_cal_time"].startswith("2024-11-22")
+    # missing post side -> NaN / sentinel
+    assert np.isnan(attrs["post_cal_offset"])
+    assert attrs["post_cal_applied"] == 0
+    assert attrs["post_cal_cast"] == -1
+    assert attrs["post_cal_time"] == ""
+
+
+def test_cal_diagnostic_attrs_sn_absent_from_offsets():
+    pre = _offsets_da(sn=999)
+    attrs = cal_diagnostic_attrs(
+        111, pre, None, cal_method="none",
+        pre_applied=False, post_applied=False,
+    )
+    assert np.isnan(attrs["pre_cal_offset"])
+    assert attrs["pre_cal_applied"] == 0
