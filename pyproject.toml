@@ -41,9 +41,9 @@ dependencies = [
 [project.urls]
 # Homepage = "https://example.com"
 # Documentation = "https://readthedocs.org"
-Repository = "https://github.com/gunnarvoet/thermodrift.git"
-Issues = "https://github.com/gunnarvoet/thermodrift/issues"
-Changelog = "https://github.com/gunnarvoet/thermodrift/blob/main/HISTORY.md"
+Repository = "https://github.com/gunnarvoet/thermochain.git"
+Issues = "https://github.com/gunnarvoet/thermochain/issues"
+Changelog = "https://github.com/gunnarvoet/thermochain/blob/main/HISTORY.md"
 
 [tool.pytest.ini_options]
 # in general, do not place a `__init__.py` in your tests
