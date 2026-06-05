@@ -315,6 +315,90 @@ def correct_drift(sensor, sn, drift):
     return sensor - driftsi
 
 
+_CAL_STOP_COLUMNS = ["stop_start", "stop_end", "mean_p", "mean_t", "duration_s"]
+
+
+def detect_cal_stops(
+    ctd,
+    *,
+    p_std_thresh=0.5,
+    min_duration="60s",
+    smooth_window="30s",
+    bridge_gap="20s",
+):
+    """Propose CTD cal-stop windows from a cast's pressure trace.
+
+    Promoted from MOTIVE notebook 01b's ``find_cal_stops``. A cal stop is
+    a contiguous run where the rolling standard deviation of pressure
+    stays below ``p_std_thresh`` (dbar) within ``smooth_window``. Adjacent
+    plateaus separated by less than ``bridge_gap`` are merged; plateaus
+    shorter than ``min_duration`` are dropped. Pure and deterministic —
+    it *proposes* candidate windows; the human confirms/nudges them and
+    writes the chosen ones to ``cal_stops.csv`` (which
+    :meth:`Mooring.compute_ctd_offsets` then consumes).
+
+    Parameters
+    ----------
+    ctd : xr.Dataset
+        Cast dataset with a time-indexed ``p`` (dbar) and ``t1`` (degC).
+    p_std_thresh : float, optional
+        Pressure rolling-std threshold in dbar. Default 0.5.
+    min_duration : str, optional
+        Pandas offset; minimum plateau length to keep. Default ``"60s"``.
+    smooth_window : str, optional
+        Pandas offset for the rolling-std window. Default ``"30s"``.
+    bridge_gap : str, optional
+        Pandas offset; merge plateaus separated by less than this.
+        Default ``"20s"``.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per candidate stop with columns ``stop_start``,
+        ``stop_end`` (``np.datetime64``), ``mean_p`` / ``mean_t`` (mean
+        pressure / CTD ``t1`` over the window), and ``duration_s``.
+    """
+    p = ctd.p.dropna(dim="time")
+    times = pd.to_datetime(p.time.values)
+    if times.size < 2:
+        return pd.DataFrame(columns=_CAL_STOP_COLUMNS)
+    dt_s = (times[1] - times[0]).total_seconds()
+    nwin = max(1, int(pd.Timedelta(smooth_window).total_seconds() / dt_s))
+    rstd = p.rolling(time=nwin, center=True).std().values
+    flag = np.isfinite(rstd) & (rstd < p_std_thresh)
+    if not flag.any():
+        return pd.DataFrame(columns=_CAL_STOP_COLUMNS)
+
+    idx = np.flatnonzero(flag)
+    breaks = np.where(np.diff(idx) > 1)[0]
+    starts = np.r_[idx[0], idx[breaks + 1]]
+    ends = np.r_[idx[breaks], idx[-1]]
+    intervals = [(times[s], times[e]) for s, e in zip(starts, ends)]
+
+    bridge = pd.Timedelta(bridge_gap)
+    merged = []
+    for s, e in intervals:
+        if merged and s - merged[-1][1] <= bridge:
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+
+    min_dur = pd.Timedelta(min_duration)
+    rows = []
+    for s, e in merged:
+        if (e - s) < min_dur:
+            continue
+        sl = slice(np.datetime64(s), np.datetime64(e))
+        rows.append({
+            "stop_start": np.datetime64(s),
+            "stop_end": np.datetime64(e),
+            "mean_p": float(ctd.p.sel(time=sl).mean()),
+            "mean_t": float(ctd.t1.sel(time=sl).mean()),
+            "duration_s": float((e - s).total_seconds()),
+        })
+    return pd.DataFrame(rows, columns=_CAL_STOP_COLUMNS)
+
+
 def parse_gridding(block, defaults=None):
     """Validate a gridding block and convert dt/max_gap/chunk to np.timedelta64.
 

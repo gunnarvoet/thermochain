@@ -671,3 +671,61 @@ def test_status_summary_l2_and_gridl2_columns(l2_mooring):
     after = m.status_summary()
     assert after.loc["deep", "l2"] == "3/3"
     assert after.loc["deep", "gridL2"] == "4/4"
+
+
+from thermodrift.pipeline import detect_cal_stops  # noqa: E402
+
+
+def _synthetic_cast(stop_p=4000.0, stop_t=2.0):
+    """A CTD cast: descend, hold a flat plateau ~6 min, ascend (1 Hz)."""
+    times = np.arange(
+        np.datetime64("2025-12-08T00:00:00"),
+        np.datetime64("2025-12-08T00:20:00"),
+        np.timedelta64(1, "s"),
+    )
+    n = times.size
+    p = np.concatenate([
+        np.linspace(0.0, stop_p, n // 3),                 # descend
+        np.full(n - 2 * (n // 3), stop_p),                # plateau
+        np.linspace(stop_p, 0.0, n // 3),                 # ascend
+    ])
+    t = np.where(np.isclose(p, stop_p), stop_t, 5.0)      # cold + steady at the stop
+    return xr.Dataset(
+        {"p": ("time", p), "t1": ("time", t), "t2": ("time", t)},
+        coords={"time": times},
+    )
+
+
+def test_detect_cal_stops_finds_the_plateau():
+    ctd = _synthetic_cast(stop_p=4000.0, stop_t=2.0)
+    stops = detect_cal_stops(ctd, p_std_thresh=0.5, min_duration="60s")
+    assert isinstance(stops, pd.DataFrame)
+    assert len(stops) == 1
+    row = stops.iloc[0]
+    assert row["mean_p"] == pytest.approx(4000.0, abs=1.0)
+    assert row["mean_t"] == pytest.approx(2.0, abs=1e-6)
+    assert row["duration_s"] >= 60.0
+    # window brackets the plateau
+    assert np.datetime64(row["stop_start"]) >= np.datetime64("2025-12-08T00:06:00")
+    assert np.datetime64(row["stop_end"]) <= np.datetime64("2025-12-08T00:14:00")
+
+
+def test_detect_cal_stops_drops_short_plateaus():
+    ctd = _synthetic_cast()
+    # a 10-minute minimum is longer than the ~6-min plateau -> nothing kept
+    stops = detect_cal_stops(ctd, min_duration="600s")
+    assert len(stops) == 0
+
+
+def test_detect_cal_stops_empty_when_never_stationary():
+    times = np.arange(
+        np.datetime64("2025-12-08T00:00:00"),
+        np.datetime64("2025-12-08T00:05:00"),
+        np.timedelta64(1, "s"),
+    )
+    p = np.linspace(0.0, 4000.0, times.size)              # monotonic, never flat
+    ctd = xr.Dataset(
+        {"p": ("time", p), "t1": ("time", p * 0), "t2": ("time", p * 0)},
+        coords={"time": times},
+    )
+    assert len(detect_cal_stops(ctd)) == 0
