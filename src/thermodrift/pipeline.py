@@ -317,6 +317,7 @@ def correct_drift(sensor, sn, drift):
 
 
 _CAL_STOP_COLUMNS = ["stop_start", "stop_end", "mean_p", "mean_t", "duration_s"]
+_CAL_STOPS_REQUIRED_COLS = ["source", "cast", "stop_start", "stop_end", "ctd_file"]
 
 
 def detect_cal_stops(
@@ -614,6 +615,8 @@ class Mooring(ProcessThermistorMooring):
 
     def _ctd_dir(self):
         """Base directory for CTD cal-cast files (``path.ctd``)."""
+        if "ctd" not in self.cfg.path:
+            raise KeyError("path.ctd not set in config")
         d = Path(self.cfg.path.ctd)
         if not d.is_absolute():
             d = Path(self.cfg.path.root) / d
@@ -626,10 +629,16 @@ class Mooring(ProcessThermistorMooring):
         ``stop_end`` (ISO datetimes), ``ctd_file`` (relative to
         :meth:`_ctd_dir`), and advisory ``ref_temp``.
         """
+        if "cal_stops" not in self.cfg.path:
+            raise KeyError("path.cal_stops not set in config")
         p = Path(self.cfg.path.cal_stops)
         if not p.is_absolute():
             p = Path(self.cfg.path.root) / p
-        return pd.read_csv(p)
+        df = pd.read_csv(p)
+        missing = [c for c in _CAL_STOPS_REQUIRED_COLS if c not in df.columns]
+        if missing:
+            raise ValueError(f"cal_stops file {p} missing required column(s): {missing}")
+        return df
 
     def _cal_cast_pool_dir(self, source):
         """Pool dir of per-sensor cal-cast series (``calibration.cal_casts_{source}``)."""

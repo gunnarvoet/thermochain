@@ -845,3 +845,29 @@ def test_compute_ctd_offsets_skips_sensor_with_no_cast_overlap(ctd_cal_mooring):
     pre = xr.open_dataarray(m._offsets_out_path("pre"))
     assert 301222 not in pre.sn.values.tolist()
     pre.close()
+
+
+def test_compute_ctd_offsets_missing_cal_stops_column_raises(ctd_cal_mooring):
+    """A cal_stops.csv lacking a required column gives a clear, named error."""
+    m = Mooring(ctd_cal_mooring)
+    csv = Path(m.cfg.path.root) / m.cfg.path.cal_stops
+    df = pd.read_csv(csv).drop(columns=["source"])
+    df.to_csv(csv, index=False)
+    with pytest.raises(ValueError, match="source"):
+        m.compute_ctd_offsets()
+
+
+def test_compute_ctd_offsets_missing_ctd_path_raises(ctd_cal_mooring):
+    """An absent path.ctd config key gives a clear error, not a BoxKeyError."""
+    m = Mooring(ctd_cal_mooring)
+    del m.cfg.path["ctd"]
+    with pytest.raises((KeyError, ValueError), match="ctd"):
+        m.compute_ctd_offsets()
+
+
+def test_compute_ctd_offsets_missing_cal_stops_path_raises(ctd_cal_mooring):
+    """An absent path.cal_stops config key gives a clear error."""
+    m = Mooring(ctd_cal_mooring)
+    del m.cfg.path["cal_stops"]
+    with pytest.raises((KeyError, ValueError), match="cal_stops"):
+        m.compute_ctd_offsets()
