@@ -140,13 +140,21 @@ class Mooring(ProcessThermistorMooring):
         return list(segments)
 
     def _ignore_sns(self):
-        """Return the configured ignore_sns list as integers.
+        """SNs to drop everywhere: config ``ignore_sns`` UNION sensor-sheet ``exclude == 1``.
+
+        Structure (segment membership) and quality (these drops) are
+        separate axes; this is the quality axis, applied on top of
+        segment selection by every consuming stage.
 
         Returns
         -------
         list of int
+            Sorted list of serial numbers to exclude from all processing stages.
         """
-        return [int(s) for s in (self.cfg.get("ignore_sns", []) or [])]
+        ignore = {int(s) for s in (self.cfg.get("ignore_sns", []) or [])}
+        if "exclude" in self.sensor_info.columns:
+            ignore |= {int(s) for s in self.sensor_info.index[self.sensor_info["exclude"] == 1]}
+        return sorted(ignore)
 
     def segment_sensors(self, segment):
         """Return mooring_info rows for one segment (structural selection only).

@@ -187,3 +187,92 @@ def segmented_mooring(tmp_path, rootdir):
     with open(cfgpath, "w") as f:
         yaml.safe_dump(cfg, f)
     return cfgpath
+
+
+@pytest.fixture
+def segmented_mooring_excluded(tmp_path, rootdir):
+    """Like ``segmented_mooring`` but with the first deep SN flagged exclude==1.
+
+    Uses SN 72219 (already in tests/data/sensor_sheet.csv with type=RBR Deep)
+    as the first deep sensor so the exclude flag can be set on a row that
+    loads cleanly through sensor_sheet_load.  The mooring sheet is built from
+    scratch with three deep SNs and one shallow SN.
+
+    The fixture writes per-sensor L1 files for ALL three deep SNs (so the
+    only reason the excluded sensor is absent from the grid is the exclude
+    filter, not a missing input file).  Returns a tuple
+    ``(config_path, excluded_sn)`` so tests can assert the SN is absent.
+    """
+    data = tmp_path / "data"
+    (data / "proc" / "l1").mkdir(parents=True)
+
+    # Build a mooring sheet where the first deep SN (72219) also lives in
+    # the sensor sheet so that flagging it there is meaningful.
+    # The other two deep SNs (201844, 202306) are also in the sensor sheet.
+    deep_sns = [72219, 201844, 202306]
+    shallow_sns = [392]
+    excluded_sn = deep_sns[0]  # 72219
+
+    moor_rows = (
+        [{"type": "RBR Solo3", "SN": sn, "height": float(i + 1), "depth": float(1430 - i), "segment": "deep"}
+         for i, sn in enumerate(deep_sns)]
+        + [{"type": "SBE 56", "SN": sn, "height": float(i + 10), "depth": float(1420 - i), "segment": "shallow"}
+           for i, sn in enumerate(shallow_sns)]
+    )
+    moor = pd.DataFrame(moor_rows)
+    moor.to_csv(data / "mooring_sheet.csv", index=False)
+
+    # Copy and augment sensor sheet: add exclude column, flag excluded_sn
+    sensor_df = pd.read_csv(rootdir / "data/sensor_sheet.csv")
+    if "exclude" not in sensor_df.columns:
+        sensor_df["exclude"] = 0
+    sensor_df.loc[sensor_df["SN"] == excluded_sn, "exclude"] = 1
+    sensor_df.to_csv(data / "sensor_sheet.csv", index=False)
+
+    times = np.arange(
+        np.datetime64("2024-01-01T00:00"),
+        np.datetime64("2024-01-05T00:00"),
+        np.timedelta64(1, "m"),
+    )
+    # Write L1 files for ALL deep SNs (including the excluded one)
+    for i, sn in enumerate(deep_sns):
+        da = xr.DataArray(
+            4.0 + 0.01 * i + 0.001 * np.sin(np.arange(times.size) / 50.0),
+            dims="time",
+            coords={"time": times},
+            name="t",
+        )
+        da.attrs.update(
+            {"sampling period in s": 60.0, "units": "degree_C", "long_name": "temperature"}
+        )
+        da.to_netcdf(data / "proc" / "l1" / f"mavs3__rbr__{sn:06d}_L1.nc")
+
+    cfg = {
+        "info": "segmented test excluded",
+        "meta": {"mooring_name": "mavs3", "project": "TestProj", "PI": "x", "email": "x"},
+        "path": {
+            "fig": "fig/",
+            "data": {
+                "raw": {"rbr": "data/raw/", "sbe": "data/raw/"},
+                "proc": "data/proc/",
+                "grid": "data/grid/",
+            },
+            "sensors": "data/sensor_sheet.csv",
+            "mooring": "data/mooring_sheet.csv",
+            "aux": "data/aux/",
+        },
+        "start_time": "2024-01-01 00:00:00",
+        "end_time": "2024-01-05 00:00:00",
+        "ignore_sns": [],
+        "gridding": {"dt": "10s", "max_gap": "30s", "chunk": "2D"},
+        "segments": {
+            "deep": {"select": {"segment": "deep"}, "gridding": {"dt": "10s", "max_gap": "30s"}},
+            "shallow": {"select": {"segment": "shallow"}},
+        },
+    }
+    cfgdir = tmp_path / "run"
+    cfgdir.mkdir()
+    cfgpath = cfgdir / "config.yml"
+    with open(cfgpath, "w") as f:
+        yaml.safe_dump(cfg, f)
+    return cfgpath, excluded_sn

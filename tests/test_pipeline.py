@@ -116,3 +116,19 @@ def test_status_summary_reports_grid_progress(segmented_mooring):
     m.grid_l1(segments=["deep"])
     after = m.status_summary()
     assert after.loc["deep", "gridL1"] == "2/2"
+
+
+def test_ignore_sns_includes_sheet_exclude(segmented_mooring_excluded):
+    cfgpath, excluded_sn = segmented_mooring_excluded
+    m = Mooring(cfgpath)
+    assert excluded_sn in m._ignore_sns()
+
+
+def test_grid_l1_drops_sheet_excluded_sensor(segmented_mooring_excluded):
+    cfgpath, excluded_sn = segmented_mooring_excluded
+    m = Mooring(cfgpath)
+    m.grid_l1(segments=["deep"])
+    grid_dir = Path(m.cfg.path.root) / "data" / "grid"
+    da = xr.open_dataarray(sorted(grid_dir.glob("testproj_mavs3_deep_L1_*.nc"))[0])
+    assert excluded_sn not in set(int(s) for s in da.sn.values)
+    assert da.sizes["depth"] == 2   # 3 deep minus 1 excluded
