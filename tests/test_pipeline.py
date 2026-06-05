@@ -373,7 +373,7 @@ import types  # noqa: E402
 from thermodrift.pipeline import drift_diag_bundle  # noqa: E402
 
 
-def _fake_sd(with_exp):
+def _fake_sd(with_exp, with_pass1=True):
     """Minimal stand-in for a fitted sensor_drift (only the attrs the bundle reads)."""
     depth = [4300.0, 4296.0, 4292.0]
     window = [0, 1, 2]
@@ -391,9 +391,10 @@ def _fake_sd(with_exp):
         tau_bounds=(5.0, 180.0),
         iteration_count=1,
         flagged_outlier_sns=[236109, 236127],
-        drift_fit_pass1=arr(3.0),
-        offsets_clean_pass1=arr(4.0),
     )
+    if with_pass1:
+        sd.drift_fit_pass1 = arr(3.0)
+        sd.offsets_clean_pass1 = arr(4.0)
     if with_exp:
         sd.drift_expfit = arr(5.0)
         sd.drift_exp_params = xr.DataArray(
@@ -414,6 +415,10 @@ def test_drift_diag_bundle_linear_has_no_exp_vars():
     assert bundle.attrs["fit_mode"] == "linear"
     assert bundle.attrs["drift_label"] == "spline_lin"
     assert bundle.attrs["drift_param_fit_mode"] == "linear"
+    # iterate_subtract=False (no pass1 attrs) -> *_pass1 guarded out
+    no_iter = drift_diag_bundle(_fake_sd(with_exp=False, with_pass1=False), dp, label="spline_lin")
+    assert "drift_fit_pass1" not in no_iter.data_vars
+    assert "offsets_clean_pass1" not in no_iter.data_vars
 
 
 def test_drift_diag_bundle_auto_includes_exp_vars():
