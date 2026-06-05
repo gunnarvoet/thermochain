@@ -1036,10 +1036,10 @@ class Mooring(ProcessThermistorMooring):
         return summary
 
     def status(self):
-        """Per-sensor progress: L0 / L1 presence + effective cal method.
+        """Per-sensor progress: L0 / L1 / L2 presence + effective cal method.
 
-        Lazy scan of the L0 and L1 dirs on each call. Index is SN;
-        columns: ``type``, ``segment``, ``ignored``, ``l0``, ``l1``,
+        Lazy scan of the L0, L1, and L2 dirs on each call. Index is SN;
+        columns: ``type``, ``segment``, ``ignored``, ``l0``, ``l1``, ``l2``,
         ``cal_method`` (read from the L1 ``cal_method`` attr).
 
         Returns
@@ -1049,6 +1049,7 @@ class Mooring(ProcessThermistorMooring):
         """
         l0dir = self._procl0_dir()
         l1dir = self._procl1_dir()
+        l2dir = self._procl2_dir()
         ignore = set(self._ignore_sns())
         seg_of = {
             int(sn): seg
@@ -1070,17 +1071,22 @@ class Mooring(ProcessThermistorMooring):
                 "ignored": sn in ignore,
                 "l0": bool(list(l0dir.glob(f"*{sn:06d}*.nc"))) if l0dir.exists() else False,
                 "l1": bool(l1_files),
+                "l2": (
+                    bool(list(l2dir.glob(f"*{sn:06d}*_L2.nc"))) if l2dir.exists() else False
+                ),
                 "cal_method": cal_method,
             })
         return pd.DataFrame(rows).set_index("sn")
 
     def status_summary(self):
-        """Per-segment progress: sensor count, L1, gridded-L1, and drift products.
+        """Per-segment progress: sensor count, L1, gridded-L1, drift, L2, gridded-L2.
 
-        Lazy scan of the L1 / grid / aux dirs on each call. Columns: ``n``
-        (sensors after ignore_sns), ``l1`` (``present/n`` per-sensor L1),
-        ``gridL1`` (``present/expected`` chunks), ``drift`` (comma-joined
-        labels present, or ``-`` for non-drift segments / none fit yet).
+        Lazy scan of the L1 / L2 / grid / aux dirs on each call. Columns:
+        ``n`` (sensors after ignore_sns), ``l1`` (``present/n`` per-sensor
+        L1), ``gridL1`` (``present/expected`` chunks), ``drift`` (comma-
+        joined labels present, or ``-``), ``l2`` (``present/n`` per-sensor
+        L2, or ``-`` for non-drift segments), ``gridL2`` (``present/
+        expected`` chunks, or ``-`` for non-drift segments).
 
         Returns
         -------
@@ -1088,7 +1094,9 @@ class Mooring(ProcessThermistorMooring):
             Index is segment name.
         """
         grid_dir = self._grid_dir()
+        gridl2_dir = self._gridl2_dir()
         l1dir = self._procl1_dir()
+        l2dir = self._procl2_dir()
         aux = self._aux_dir()
         ignore = set(self._ignore_sns())
         drift_segments = set(self._drift_segments())
@@ -1106,19 +1114,31 @@ class Mooring(ProcessThermistorMooring):
             )
             pattern = f"{mooring_id}_{seg}_L1_*.nc"
             present = len(list(grid_dir.glob(pattern))) if grid_dir.exists() else 0
-            if seg in drift_segments and aux.exists():
+            if seg in drift_segments:
                 labels = sorted(
                     p.name[len(f"drift_{mooring_id}_"):-3]
                     for p in aux.glob(f"drift_{mooring_id}_*.nc")
-                )
+                ) if aux.exists() else []
                 drift = ", ".join(labels) if labels else "-"
+                l2_present = sum(
+                    1 for s in sns
+                    if l2dir.exists() and list(l2dir.glob(f"*{s:06d}*_L2.nc"))
+                )
+                l2 = f"{l2_present}/{len(sns)}"
+                gl2_present = (
+                    len(list(gridl2_dir.glob(f"{mooring_id}_{seg}_L2_*.nc")))
+                    if gridl2_dir.exists() else 0
+                )
+                gridL2 = f"{gl2_present}/{n_chunks}"
             else:
-                drift = "-"
+                drift = l2 = gridL2 = "-"
             rows.append({
                 "segment": seg,
                 "n": len(sns),
                 "l1": f"{l1_present}/{len(sns)}",
                 "gridL1": f"{present}/{n_chunks}",
                 "drift": drift,
+                "l2": l2,
+                "gridL2": gridL2,
             })
         return pd.DataFrame(rows).set_index("segment")

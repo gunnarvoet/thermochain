@@ -646,3 +646,28 @@ def test_grid_l2_idempotent_then_overwrite(l2_mooring):
     assert second["deep"]["written"] == 0 and second["deep"]["skipped"] == 4
     third = m.grid_l2(overwrite=True)
     assert third["deep"]["written"] == 4
+
+
+def test_status_includes_l2_column(l2_mooring):
+    m = Mooring(l2_mooring)
+    deep_sn = int(sorted(m.segment_sensors("deep").index)[0])
+    before = m.status()
+    assert bool(before.loc[deep_sn, "l2"]) is False
+    m.make_l2()
+    after = m.status()
+    assert bool(after.loc[deep_sn, "l2"]) is True
+
+
+def test_status_summary_l2_and_gridl2_columns(l2_mooring):
+    m = Mooring(l2_mooring)
+    before = m.status_summary()
+    assert before.loc["deep", "l2"] == "0/3"
+    assert before.loc["deep", "gridL2"] == "0/4"
+    assert before.loc["shallow", "l2"] == "-"        # non-drift segment
+    assert before.loc["shallow", "gridL2"] == "-"
+
+    m.make_l2()
+    m.grid_l2()
+    after = m.status_summary()
+    assert after.loc["deep", "l2"] == "3/3"
+    assert after.loc["deep", "gridL2"] == "4/4"
