@@ -276,3 +276,109 @@ def segmented_mooring_excluded(tmp_path, rootdir):
     with open(cfgpath, "w") as f:
         yaml.safe_dump(cfg, f)
     return cfgpath, excluded_sn
+
+
+@pytest.fixture
+def cal_mooring(tmp_path):
+    """Self-contained mooring for cut_and_cal: config + sheets + L0 + offsets.
+
+    Two deep SNs (scalar_pre_only) and one shallow SN (linear_interp).
+    L0 spans 2024-11-20..12-01 at 60 s; the deployment window
+    2024-11-22..11-30 trims both ends so the cut logic is exercised.
+    Pre/post offsets are distinct so an interpolated value is detectable.
+    Returns the config path.
+    """
+    deep_sns = [301111, 301222]
+    shallow_sns = [302333]
+    all_sns = deep_sns + shallow_sns
+
+    data = tmp_path / "data"
+    (data / "proc" / "l0").mkdir(parents=True)
+    (data / "aux" / "cal_results").mkdir(parents=True)
+
+    # sensor sheet (raw column names; sensor_sheet_load renames them)
+    # Includes all columns required by sensor_sheet_columns_to_dt64 (time_cal1/2,
+    # clock_read_utc/logger) plus the CTD cal columns needed by cut_and_cal.
+    sensor_rows = []
+    for sn in all_sns:
+        sensor_rows.append({
+            "SN": sn,
+            "Type": "RBR Solo",
+            "Pre-Deployment CTD Calibration Time": "2024-11-20 12:00:00",
+            "Pre-Deployment CTD Calibration Cast": 1,
+            "Post-Deployment CTD Calibration Time": "2024-12-02 12:00:00",
+            "Post-Deployment CTD Calibration Cast": 5,
+            "Pre-Deployment Time Calibration": "2024-11-18 10:00:00",
+            "Post-Deployment Time Calibration": "2024-12-05 10:00:00",
+            "Post-Deployment UTC Time": "2024-12-05 10:00:00",
+            "Post-Deployment Logger Time": "2024-12-05 10:00:05",
+            "exclude": 0,
+        })
+    pd.DataFrame(sensor_rows).to_csv(data / "sensor_sheet.csv", index=False)
+
+    # mooring sheet with segment column
+    moor_rows = (
+        [{"type": "RBR Solo", "SN": sn, "depth": 4300.0 - i, "segment": "deep"}
+         for i, sn in enumerate(deep_sns)]
+        + [{"type": "RBR Solo", "SN": sn, "depth": 2000.0, "segment": "shallow"}
+           for sn in shallow_sns]
+    )
+    pd.DataFrame(moor_rows).to_csv(data / "mooring_sheet.csv", index=False)
+
+    # per-sensor L0 (one file each; glob is *{sn:06}*.nc)
+    times = np.arange(
+        np.datetime64("2024-11-20T00:00"),
+        np.datetime64("2024-12-01T00:00"),
+        np.timedelta64(1, "m"),
+    )
+    for i, sn in enumerate(all_sns):
+        da = xr.DataArray(
+            4.0 + 0.01 * i + 0.001 * np.sin(np.arange(times.size) / 50.0),
+            dims="time", coords={"time": times}, name="t",
+        )
+        da.attrs.update({"sampling period in s": 60.0, "units": "degree_C",
+                         "long_name": "temperature", "SN": sn})
+        da.to_netcdf(data / "proc" / "l0" / f"testproj_a__rbr__{sn:06d}_L0.nc")
+
+    # pre / post offsets NetCDFs (distinct values per side)
+    def _offsets(fname, base):
+        ds = xr.Dataset(
+            {"offset": ("sn", [base + 0.001 * k for k in range(len(all_sns))])},
+            coords={"sn": all_sns, "cast": ("sn", [1] * len(all_sns))},
+        )
+        ds.to_netcdf(data / "aux" / "cal_results" / fname)
+    _offsets("motive_cruise1_cal_offsets.nc", base=0.100)   # pre
+    _offsets("motive_cruise2_cal_offsets.nc", base=0.200)   # post
+
+    cfg = {
+        "info": "cal test",
+        "meta": {"mooring_name": "A", "project": "TestProj", "PI": "x", "email": "x"},
+        "path": {
+            "fig": "fig/",
+            "data": {"raw": {"rbr": "data/raw/", "sbe": "data/raw/"},
+                     "proc": "data/proc/", "grid": "data/grid/"},
+            "sensors": "data/sensor_sheet.csv",
+            "mooring": "data/mooring_sheet.csv",
+            "aux": "data/aux/",
+        },
+        "start_time": "2024-11-22 00:00:00",
+        "end_time": "2024-11-30 00:00:00",
+        "ignore_sns": [],
+        "gridding": {"dt": "10s", "max_gap": "30s", "chunk": "2D"},
+        "calibration": {
+            "method": "linear_interp",
+            "offsets_pre": "data/aux/cal_results/motive_cruise1_cal_offsets.nc",
+            "offsets_post": "data/aux/cal_results/motive_cruise2_cal_offsets.nc",
+        },
+        "segments": {
+            "deep": {"select": {"segment": "deep"},
+                     "calibration": {"method": "scalar_pre_only"}},
+            "shallow": {"select": {"segment": "shallow"}},
+        },
+    }
+    cfgdir = tmp_path / "run"
+    cfgdir.mkdir()
+    cfgpath = cfgdir / "config.yml"
+    with open(cfgpath, "w") as f:
+        yaml.safe_dump(cfg, f)
+    return cfgpath

@@ -217,3 +217,54 @@ def test_cal_diagnostic_attrs_sn_absent_from_offsets():
     )
     assert np.isnan(attrs["pre_cal_offset"])
     assert attrs["pre_cal_applied"] == 0
+
+
+def _l1_for(l1dir, sn):
+    files = list(l1dir.glob(f"*{sn:06d}*_L1.nc"))
+    assert len(files) == 1, f"expected 1 L1 for {sn}, got {files}"
+    return xr.open_dataarray(files[0])
+
+
+def test_cut_and_cal_deep_scalar_pre_only(cal_mooring):
+    m = Mooring(cal_mooring)
+    l1dir = Path(m.cfg.path.data.procl1)
+    summary = m.cut_and_cal(segments=["deep"])
+    assert summary["deep"]["written"] == 2
+    deep_sn = sorted(m.segment_sensors("deep").index)[0]
+    da = _l1_for(l1dir, deep_sn)
+    assert da.time.values[0] >= np.datetime64("2024-11-22T00:00")
+    assert da.time.values[-1] <= np.datetime64("2024-11-30T00:00")
+    assert da.attrs["cal_method"] == "scalar_pre_only"
+    assert da.attrs["pre_cal_applied"] == 1
+    assert da.attrs["post_cal_applied"] == 0
+
+
+def test_cut_and_cal_shallow_linear_interp(cal_mooring):
+    m = Mooring(cal_mooring)
+    l1dir = Path(m.cfg.path.data.procl1)
+    m.cut_and_cal(segments=["shallow"])
+    sn = sorted(m.segment_sensors("shallow").index)[0]
+    da = _l1_for(l1dir, sn)
+    assert da.attrs["cal_method"] == "linear_interp"
+    assert da.attrs["pre_cal_applied"] == 1
+    assert da.attrs["post_cal_applied"] == 1
+
+
+def test_cut_and_cal_idempotent_then_overwrite(cal_mooring):
+    m = Mooring(cal_mooring)
+    first = m.cut_and_cal(segments=["deep"])
+    assert first["deep"]["written"] == 2 and first["deep"]["skipped"] == 0
+    second = m.cut_and_cal(segments=["deep"])
+    assert second["deep"]["written"] == 0 and second["deep"]["skipped"] == 2
+    third = m.cut_and_cal(segments=["deep"], overwrite=True)
+    assert third["deep"]["written"] == 2
+
+
+def test_cut_and_cal_respects_ignore_sns(cal_mooring):
+    m = Mooring(cal_mooring)
+    ignore_sn = int(sorted(m.segment_sensors("deep").index)[0])
+    m.cfg.ignore_sns = [ignore_sn]
+    summary = m.cut_and_cal(segments=["deep"])
+    assert summary["deep"]["written"] == 1
+    l1dir = Path(m.cfg.path.data.procl1)
+    assert not list(l1dir.glob(f"*{ignore_sn:06d}*_L1.nc"))
