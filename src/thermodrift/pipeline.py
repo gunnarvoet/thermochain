@@ -167,3 +167,72 @@ class Mooring(ProcessThermistorMooring):
             self.cfg.path.root,
         )
         return self.mooring_info.loc[self.mooring_info.index.intersection(sns)]
+
+    def _grid_dir(self):
+        d = Path(self.cfg.path.data.grid)
+        if not d.is_absolute():
+            d = Path(self.cfg.path.root) / d
+        return d
+
+    def _grid_filename(self, segment, level, ti):
+        stamp = np.datetime_as_string(np.datetime64(ti, "s")).replace("-", "").replace(":", "")
+        return (
+            f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}"
+            f"_{segment}_L{level}_{stamp}.nc"
+        )
+
+    def grid_l1(self, segments=None, overwrite=False):
+        """Grid per-sensor L1 to (depth, time) chunks, one set per segment.
+
+        Mirrors notebook 03: build the full deployment once via
+        ``grid_thermistors`` (peak RAM bounded by one (depth x time)
+        array), then slice and write fixed-length chunks. Idempotent —
+        existing chunk files are skipped unless ``overwrite=True``.
+        ``ignore_sns`` is applied via ``exclude_sn`` (structure vs.
+        quality kept separate).
+
+        Parameters
+        ----------
+        segments : str, list of str, or None, optional
+            Segment(s) to process. ``None`` processes all defined segments.
+        overwrite : bool, optional
+            If ``True``, rewrite existing chunk files. Default ``False``.
+
+        Returns
+        -------
+        dict
+            ``{segment: {"written": int, "skipped": int, "chunks": int}}``.
+        """
+        grid_dir = self._grid_dir()
+        grid_dir.mkdir(parents=True, exist_ok=True)
+        procl1 = Path(self.cfg.path.data.procl1)
+        summary = {}
+        for seg in self._segment_names(segments):
+            gp = self.gridding[seg]
+            info_sub = self.segment_sensors(seg)
+            start_times = np.arange(
+                self.cfg.start_time, self.cfg.end_time, gp["chunk"], dtype="datetime64[s]"
+            )
+            written = skipped = 0
+            full = None
+            for ti in start_times:
+                fpath = grid_dir / self._grid_filename(seg, 1, ti)
+                if fpath.exists() and not overwrite:
+                    skipped += 1
+                    continue
+                if full is None:
+                    full = grid_thermistors(
+                        info_sub,
+                        procl1,
+                        start=self.cfg.start_time,
+                        end=self.cfg.end_time,
+                        dt=gp["dt"],
+                        max_gap=gp["max_gap"],
+                        exclude_sn=self._ignore_sns(),
+                    )
+                full.sel(time=slice(ti, ti + gp["chunk"])).to_netcdf(fpath)
+                written += 1
+            if full is not None:
+                del full
+            summary[seg] = {"written": written, "skipped": skipped, "chunks": len(start_times)}
+        return summary

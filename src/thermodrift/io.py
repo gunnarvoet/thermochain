@@ -1165,7 +1165,7 @@ def grid_thermistors(
     sensor_attrs = None
     logger.info("loading sensors")
     i = 0
-    for sn, soloi in tqdm.tqdm_notebook(sensor_info.groupby("SN")):
+    for sn, soloi in tqdm.tqdm(sensor_info.groupby("SN")):
         raw = rbr_load_proc_level1(sn, proc_dir)
         if raw is None:
             continue
@@ -1763,7 +1763,7 @@ class sensor_drift:
             all_offs.append(offs)
             time_window_means.append((w, full.time.mean(dim="time").data))
 
-        for file in tqdm.tqdm_notebook(self.files_gridded_level1):
+        for file in tqdm.tqdm(self.files_gridded_level1):
             data_gridded = xr.open_dataarray(file).load()
             data_gridded.close()
             elapsed_ns = (

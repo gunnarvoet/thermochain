@@ -56,8 +56,6 @@ def test_resolve_segment_unknown_spec_raises():
         resolve_segment_sns(_mooring_df(), {"foo": "bar"}, root=".")
 
 
-import numpy as np  # noqa: E402 (already imported above, idempotent)
-
 import thermodrift  # noqa: E402
 from thermodrift.pipeline import Mooring  # noqa: E402
 
@@ -76,3 +74,34 @@ def test_mooring_parses_segments_and_gridding(segmented_mooring):
 def test_mooring_segment_sensors_returns_three_deep(segmented_mooring):
     m = Mooring(segmented_mooring)
     assert len(m.segment_sensors("deep")) == 3
+
+
+from pathlib import Path  # noqa: E402 (already imported at top of pipeline.py, idempotent here)
+
+import xarray as xr  # noqa: E402
+
+
+def test_grid_l1_writes_chunks_and_is_idempotent(segmented_mooring):
+    m = Mooring(segmented_mooring)
+    grid_dir = Path(m.cfg.path.root) / "data" / "grid"
+
+    summary = m.grid_l1(segments=["deep"])
+    assert summary["deep"]["written"] == 2          # 4-day span / 2D chunk
+    assert summary["deep"]["skipped"] == 0
+    files = sorted(grid_dir.glob("testproj_mavs3_deep_L1_*.nc"))
+    assert len(files) == 2
+
+    da = xr.open_dataarray(files[0])
+    assert da.sizes["depth"] == 3
+    assert set(int(s) for s in da.sn.values) == set(int(s) for s in m.segment_sensors("deep").index)
+
+    summary2 = m.grid_l1(segments=["deep"])
+    assert summary2["deep"]["written"] == 0
+    assert summary2["deep"]["skipped"] == 2
+
+
+def test_grid_l1_overwrite_forces_rewrite(segmented_mooring):
+    m = Mooring(segmented_mooring)
+    m.grid_l1(segments=["deep"])
+    summary = m.grid_l1(segments=["deep"], overwrite=True)
+    assert summary["deep"]["written"] == 2

@@ -63,6 +63,9 @@ filterwarnings = [
     # the module works at runtime. Triggered via gvpy.trilaterate
     # importing netCDF4 at module load.
     'ignore:numpy\.ndarray size changed:RuntimeWarning',
+    # tqdm.tqdm_notebook is deprecated in tqdm>=5 but still works; used
+    # inside grid_thermistors/ProcessThermistorMooring until updated.
+    'ignore:This function will be removed in tqdm==5\.0\.0:tqdm.std.TqdmDeprecationWarning',
 ]
 
 [tool.pdm]
