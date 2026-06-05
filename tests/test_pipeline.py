@@ -791,3 +791,33 @@ def test_compute_ctd_offsets_single_source(ctd_cal_mooring):
     assert set(summary) == {"post"}
     assert m._offsets_out_path("post").exists()
     assert not m._offsets_out_path("pre").exists()
+
+
+def test_compute_ctd_offsets_honors_cal_ignore_list(ctd_cal_mooring):
+    """A sensor with a valid pool file is still excluded if cal-ignored."""
+    m = Mooring(ctd_cal_mooring)
+    # 301111 IS assigned to pre cast 1 and has a valid pool file, but mark it
+    # cal-ignored for the pre source -> it must not appear in the pre offsets.
+    m.cfg.calibration.cal_ignore_sns_pre = [301111]
+    summary = m.compute_ctd_offsets(sources=["pre"])
+    assert summary["pre"]["written"] == 2          # was 3 (301111 dropped)
+    pre = xr.open_dataarray(m._offsets_out_path("pre"))
+    assert 301111 not in pre.sn.values.tolist()
+    assert 301222 in pre.sn.values.tolist()
+    pre.close()
+
+
+def test_compute_ctd_offsets_skips_degenerate_pool_file(ctd_cal_mooring):
+    """A pool file with no data variables is skipped, not fatal."""
+    m = Mooring(ctd_cal_mooring)
+    pool = m._cal_cast_pool_dir("pre")
+    # overwrite 301222's pre-cast-1 pool file with a degenerate (no-data-var,
+    # 0-length time) dataset, mimicking the real motive_c__rbr__235218 file.
+    bad = next(pool.glob("*301222*.nc"))
+    xr.Dataset(coords={"time": np.array([], dtype="datetime64[ns]")}).to_netcdf(bad)
+    summary = m.compute_ctd_offsets(sources=["pre"])
+    # 301222 dropped from cast 1; 301111 (cast1) + 301333 (cast4) remain
+    assert summary["pre"]["written"] == 2
+    pre = xr.open_dataarray(m._offsets_out_path("pre"))
+    assert 301222 not in pre.sn.values.tolist()
+    pre.close()

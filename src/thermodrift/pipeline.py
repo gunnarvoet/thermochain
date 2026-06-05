@@ -675,6 +675,13 @@ class Mooring(ProcessThermistorMooring):
         files. Idempotent: an existing output is skipped unless
         ``overwrite=True``.
 
+        An optional per-source ignore list ``calibration.cal_ignore_sns_{source}``
+        (e.g. ``cal_ignore_sns_pre``) excludes listed SNs even when a valid pool
+        file exists — parallel to the notebooks' ``pre_cal_ignore_sns`` /
+        ``post_cal_ignore_sns``. Pool files that are unreadable (e.g. no data
+        variables) or empty (zero-length time) are skipped with a warning rather
+        than raising, so a degenerate file does not abort the full source.
+
         Parameters
         ----------
         sources : str, list of str, or None, optional
@@ -711,6 +718,9 @@ class Mooring(ProcessThermistorMooring):
             col = assign_col[source]
             rows = cal_stops[cal_stops["source"] == source]
 
+            cal = self.cfg.get("calibration", {}) or {}
+            ignore = set(int(s) for s in (cal.get(f"cal_ignore_sns_{source}", []) or []))
+
             parts = []
             for _, r in rows.iterrows():
                 cast_no = int(r["cast"])
@@ -719,6 +729,7 @@ class Mooring(ProcessThermistorMooring):
 
                 assign = pd.to_numeric(self.sensor_info[col], errors="coerce")
                 assigned = [int(sn) for sn in self.sensor_info.index[assign == cast_no]]
+                assigned = [sn for sn in assigned if sn not in ignore]
                 cals, kept = [], []
                 for sn in assigned:
                     files = list(pool.glob(f"*{sn:06d}*.nc"))
@@ -728,7 +739,20 @@ class Mooring(ProcessThermistorMooring):
                         raise OSError(
                             f"ambiguous pool files for SN{sn:06d} in {pool}: {[f.name for f in files]}"
                         )
-                    cals.append(xr.open_dataarray(files[0]).sel(time=cast_period))
+                    try:
+                        da = xr.open_dataarray(files[0])
+                    except ValueError as exc:
+                        logger.warning(
+                            f"{source} SN{sn:06d}: unreadable pool file {files[0].name} ({exc}); skipping"
+                        )
+                        continue
+                    if da.sizes.get("time", 0) == 0:
+                        da.close()
+                        logger.warning(
+                            f"{source} SN{sn:06d}: empty pool file {files[0].name}; skipping"
+                        )
+                        continue
+                    cals.append(da.sel(time=cast_period))
                     kept.append(sn)
                 if not cals:
                     logger.warning(f"{source} cast {cast_no}: no sensors in pool, skipping")
