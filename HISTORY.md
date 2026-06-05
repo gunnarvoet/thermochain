@@ -1,8 +1,15 @@
 # History
 
-<!-- ## unreleased -->
-<!-- ### Breaking changes -->
- 
+## unreleased
+
+### Breaking changes
+-   Package renamed `thermodrift` → `thermochain` as it grows from a
+    drift-correction library into the full moored-thermistor processing
+    pipeline. Update imports to `import thermochain`. `import thermodrift` is
+    kept as a **deprecated alias** that re-exports `thermochain` and emits a
+    `DeprecationWarning`; it will be removed in a future release. The GitHub
+    repository was renamed accordingly (with redirects from the old name).
+
 <!-- ### New Features -->
 
 <!-- ### Bug fixes -->

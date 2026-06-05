@@ -3,7 +3,7 @@ requires = ["uv_build>=0.8.19,<0.9.0"]
 build-backend = "uv_build"
 
 [project]
-name = "thermodrift"
+name = "thermochain"
 version = "2026.03.0"
 authors = [
     {name = "Gunnar Voet", email = 'gvoet@ucsd.edu'},
@@ -68,6 +68,13 @@ filterwarnings = [
     # want escalated to an error inside fit_drift's real fit.
     'ignore:GroupBy\.apply may be deprecated:PendingDeprecationWarning',
 ]
+
+[tool.uv.build-backend]
+# Ship the deprecated `thermodrift` alias shim alongside `thermochain`.
+# Defensive: the editable install already exposes all of src/ via .pth, but
+# this makes the two top-level modules explicit. The wheel one-module limit is
+# a Phase-4 (PyPI) concern.
+module-name = ["thermochain", "thermodrift"]
 
 [tool.pdm]
 package-type = "library"

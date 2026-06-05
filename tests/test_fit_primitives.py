@@ -1,4 +1,4 @@
-"""Unit tests for thermodrift.io fit primitives."""
+"""Unit tests for thermochain.io fit primitives."""
 
 import functools
 
@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from thermodrift.io import (
+from thermochain.io import (
     calculate_r2,
     exp_function,
     expfit_ufunc,
@@ -38,7 +38,7 @@ class TestCalculateR2:
 class TestExpFunctionMatchesEq5:
     """Target-behaviour tests for refactor step 5.2(a).
 
-    The current thermodrift.io.exp_function uses
+    The current thermochain.io.exp_function uses
     ``gammainc(1/β, t/τ)`` without the ``/β`` prefactor. This matches
     Eq. 5 only at β = 1. These tests pin the rewrite to the paper.
     """

@@ -1,4 +1,4 @@
-"""End-to-end smoke test for thermodrift.io.sensor_drift.
+"""End-to-end smoke test for thermochain.io.sensor_drift.
 
 Goal: exercise the full call graph on synthetic data so the refactor
 cannot silently break wiring. Does NOT assert numerical drift values.
@@ -8,10 +8,10 @@ import numpy as np
 import pytest
 import tqdm
 
-from thermodrift.io import sensor_drift
+from thermochain.io import sensor_drift
 
 
-# Pre-existing deprecation noise from thermodrift.io that refactor phase 1
+# Pre-existing deprecation noise from thermochain.io that refactor phase 1
 # will clean up: find_outliers' z.argmax() without dim= (DeprecationWarning),
 # and an xarray GroupBy.apply call (PendingDeprecationWarning). Ignore both
 # so the smoke test stays focused on pipeline wiring.
@@ -23,7 +23,7 @@ pytestmark = [
 
 @pytest.fixture(autouse=True)
 def _plain_tqdm(monkeypatch):
-    # thermodrift.io hardcodes tqdm.tqdm_notebook, which needs ipywidgets.
+    # thermochain.io hardcodes tqdm.tqdm_notebook, which needs ipywidgets.
     # Swap it for the plain text bar so tests don't require a Jupyter env.
     # Refactor phase 1 will replace this with tqdm.auto.
     monkeypatch.setattr(tqdm, "tqdm_notebook", tqdm.tqdm, raising=False)

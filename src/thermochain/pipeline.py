@@ -1,5 +1,5 @@
-# src/thermodrift/pipeline.py
-"""Config-driven Mooring pipeline orchestration over thermodrift primitives."""
+# src/thermochain/pipeline.py
+"""Config-driven Mooring pipeline orchestration over thermochain primitives."""
 
 import re
 from dataclasses import asdict, dataclass, field, fields
@@ -130,7 +130,7 @@ class DriftParameters:
     """Typed, validated CvHG16 drift-fit parameters.
 
     Field names and defaults mirror
-    :meth:`thermodrift.io.sensor_drift.parse_drift_parameters` exactly, so a
+    :meth:`thermochain.io.sensor_drift.parse_drift_parameters` exactly, so a
     ``DriftParameters().as_dict()`` reproduces today's defaults. Unlike the
     loose ``setattr`` loop in the primitive, :meth:`from_dict` **rejects
     unknown keys** (a YAML typo like ``spline_smoothh`` raises instead of
@@ -251,7 +251,7 @@ def drift_diag_bundle(sd, params, label):
 
     Parameters
     ----------
-    sd : thermodrift.io.sensor_drift
+    sd : thermochain.io.sensor_drift
         A fitted instance (``run_all=True`` already executed).
     params : DriftParameters
         Validated parameters for the provenance attrs.
@@ -995,7 +995,7 @@ class Mooring(ProcessThermistorMooring):
     ):
         """Run the CvHG16 drift fit on the ``drift: true`` segments.
 
-        Wraps the unchanged :class:`thermodrift.io.sensor_drift`
+        Wraps the unchanged :class:`thermochain.io.sensor_drift`
         (``run_all=True``) + ``drift_to_netcdf`` primitives. For each drift
         segment it fits the gridded-L1 deep array, writes the drift product
         ``drift_{project}_{mooring}_{label}.nc`` and the diagnostic bundle

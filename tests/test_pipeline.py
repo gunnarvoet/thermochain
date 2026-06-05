@@ -4,7 +4,7 @@ import shutil
 import numpy as np
 import pytest
 
-from thermodrift.pipeline import parse_gridding
+from thermochain.pipeline import parse_gridding
 
 
 def test_parse_gridding_converts_strings_to_timedelta64():
@@ -27,7 +27,7 @@ def test_parse_gridding_rejects_unknown_keys():
 
 import pandas as pd  # noqa: E402
 
-from thermodrift.pipeline import resolve_segment_sns  # noqa: E402
+from thermochain.pipeline import resolve_segment_sns  # noqa: E402
 
 
 def _mooring_df():
@@ -58,12 +58,12 @@ def test_resolve_segment_unknown_spec_raises():
         resolve_segment_sns(_mooring_df(), {"foo": "bar"}, root=".")
 
 
-import thermodrift  # noqa: E402
-from thermodrift.pipeline import Mooring  # noqa: E402
+import thermochain  # noqa: E402
+from thermochain.pipeline import Mooring  # noqa: E402
 
 
 def test_mooring_exported_at_package_root():
-    assert thermodrift.Mooring is Mooring
+    assert thermochain.Mooring is Mooring
 
 
 def test_mooring_parses_segments_and_gridding(segmented_mooring):
@@ -153,7 +153,7 @@ def test_parse_gridding_raises_on_missing_required_keys():
         parse_gridding({"dt": "2s"})
 
 
-from thermodrift.pipeline import load_cal_offsets  # noqa: E402
+from thermochain.pipeline import load_cal_offsets  # noqa: E402
 
 
 def _write_offsets(path, sns, offsets, casts, cruise_in_name="cruise1"):
@@ -179,7 +179,7 @@ def test_load_cal_offsets_missing_file_returns_none(tmp_path):
     assert load_cal_offsets(tmp_path / "does_not_exist.nc") is None
 
 
-from thermodrift.pipeline import cal_diagnostic_attrs  # noqa: E402
+from thermochain.pipeline import cal_diagnostic_attrs  # noqa: E402
 
 
 def _offsets_da(sn=111, offset=0.15, cruise="cruise1", cast=1):
@@ -296,7 +296,7 @@ def test_status_summary_reports_l1_count(cal_mooring):
     assert m.status_summary().loc["deep", "l1"] == "2/2"
 
 
-from thermodrift.pipeline import correct_drift, DriftParameters  # noqa: E402
+from thermochain.pipeline import correct_drift, DriftParameters  # noqa: E402
 
 
 def test_drift_parameters_defaults_mirror_sensor_drift():
@@ -344,7 +344,7 @@ def test_drift_parameters_as_dict_roundtrips_for_sensor_drift():
     }
 
 
-from thermodrift.pipeline import drift_provenance_attrs  # noqa: E402
+from thermochain.pipeline import drift_provenance_attrs  # noqa: E402
 
 
 def test_drift_provenance_attrs_are_netcdf_safe():
@@ -375,7 +375,7 @@ def test_drift_provenance_attrs_are_netcdf_safe():
 
 import types  # noqa: E402
 
-from thermodrift.pipeline import drift_diag_bundle  # noqa: E402
+from thermochain.pipeline import drift_diag_bundle  # noqa: E402
 
 
 def _fake_sd(with_exp, with_pass1=True):
@@ -443,7 +443,7 @@ def test_fit_drift_writes_products_and_returns_sensor_drift(drift_mooring):
     out = m.fit_drift()                       # config default: label=testfit, deep only
     assert set(out) == {"deep"}
     sd = out["deep"]
-    assert isinstance(sd, thermodrift.io.sensor_drift)   # returned for diagnostics
+    assert isinstance(sd, thermochain.io.sensor_drift)   # returned for diagnostics
 
     drift_f = aux / "drift_testproj_a_testfit.nc"
     diag_f = aux / "diag_testproj_a_testfit.nc"
@@ -676,7 +676,7 @@ def test_status_summary_l2_and_gridl2_columns(l2_mooring):
     assert after.loc["deep", "gridL2"] == "4/4"
 
 
-from thermodrift.pipeline import detect_cal_stops  # noqa: E402
+from thermochain.pipeline import detect_cal_stops  # noqa: E402
 
 
 def _synthetic_cast(stop_p=4000.0, stop_t=2.0):
@@ -734,7 +734,7 @@ def test_detect_cal_stops_empty_when_never_stationary():
     assert len(detect_cal_stops(ctd)) == 0
 
 
-from thermodrift.io import rbr_ctd_cal_find_offset  # noqa: E402
+from thermochain.io import rbr_ctd_cal_find_offset  # noqa: E402
 
 
 def test_compute_ctd_offsets_writes_both_files(ctd_cal_mooring):

@@ -1,4 +1,4 @@
-# thermodrift
+# thermochain
 
 Moored thermistor processing Python package
 

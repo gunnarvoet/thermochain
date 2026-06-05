@@ -1,10 +1,10 @@
-"""Tests for thermodrift.io.offsets_from_background_fit."""
+"""Tests for thermochain.io.offsets_from_background_fit."""
 
 import numpy as np
 import pytest
 import xarray as xr
 
-from thermodrift.io import offsets_from_background_fit
+from thermochain.io import offsets_from_background_fit
 
 
 def _synthetic_profile(n_depth=40, n_time=200, seed=0, edge_kick=0.0):

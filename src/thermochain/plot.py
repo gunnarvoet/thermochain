@@ -1,9 +1,9 @@
 # coding: utf-8
-"""Plotting helpers for thermodrift datasets.
+"""Plotting helpers for thermochain datasets.
 
 This module currently holds quick-look plotting helpers for gridded
 thermistor records. Drift-diagnostic plot routines defined alongside
-`thermodrift.io.sensor_drift` are slated to consolidate here in a future
+`thermochain.io.sensor_drift` are slated to consolidate here in a future
 module-restructuring pass.
 """
 

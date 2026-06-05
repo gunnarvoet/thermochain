@@ -1,6 +1,6 @@
 """Reference implementation of CvHG16 Eq. 5 for synthetic drift test data.
 
-This is intentionally independent of thermodrift.io.exp_function so that
+This is intentionally independent of thermochain.io.exp_function so that
 test_fit_primitives can use it as ground truth.
 
 Reference: Cimatoribus, van Haren, Gostiaux 2016, JTECH,

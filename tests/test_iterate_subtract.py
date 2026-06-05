@@ -16,7 +16,7 @@ import tqdm
 import xarray as xr
 
 from _synthetic import write_drift_l1_files
-from thermodrift.io import sensor_drift
+from thermochain.io import sensor_drift
 
 
 pytestmark = [

@@ -27,16 +27,16 @@ help:
 	@python -c "$$PRINT_HELP_PYSCRIPT" < $(MAKEFILE_LIST)
 
 lint: ## check style with flake8
-	ruff check src/thermodrift
+	ruff check src/thermochain
 
 test: ## run tests
 	pytest
 
 docs: ## generate documentation using pdoc
 	rm -rf docs
-	uv run pdoc --math -t .pdoc-theme-gv -d numpy -o docs thermodrift
+	uv run pdoc --math -t .pdoc-theme-gv -d numpy -o docs thermochain
 	$(BROWSER) docs/index.html
 
 servedocs: ## compile the docs & watch for changes
-	pdoc --math -t .pdoc-theme-gv -d numpy thermodrift
+	pdoc --math -t .pdoc-theme-gv -d numpy thermochain
 	# $(BROWSER) http://localhost:8080

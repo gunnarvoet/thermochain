@@ -1,10 +1,10 @@
-"""Tests for thermodrift.io.find_outliers."""
+"""Tests for thermochain.io.find_outliers."""
 
 import numpy as np
 import pytest
 import xarray as xr
 
-from thermodrift.io import find_outliers
+from thermochain.io import find_outliers
 
 
 def _synthetic_stratification(n_depth=40, n_time=200, seed=0):
@@ -44,7 +44,7 @@ class TestFindOutliers:
     @pytest.mark.filterwarnings(
         # find_outliers' second_fit branch calls z.argmax() without dim=,
         # which triggers a DeprecationWarning on current xarray. Pre-
-        # existing bug in thermodrift.io; not in scope for this test PR.
+        # existing bug in thermochain.io; not in scope for this test PR.
         "ignore::DeprecationWarning",
     )
     def test_two_stage_criterion(self):
