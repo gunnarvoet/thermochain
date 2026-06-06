@@ -69,6 +69,8 @@ Implemented in `thermochain.io.sensor_drift`. With `run_all=True` the class runs
 6. **Second-guess shared component** recomputed from the detrended offsets, then subtracted from the *original* offsets to yield **cleaned offsets**. (`calc_second_guess_shared_fluctuating_component`, `calc_cleaned_offsets`)
 7. **Final drift fit** on the cleaned offsets. (`fit_cleaned_offsets`)
 
+Step 6 is the CvHG16 two-step refinement and is the default (`two_step_shared=True`). Setting `two_step_shared=False` recovers the legacy single-pass behaviour, in which the recompute reads the (non-detrended) offsets and the second-guess shared component collapses to the first guess — making the interim fit (step 5) a no-op. The flag exists to reproduce pre-fix drift products; new work should leave it at the default.
+
 ## Drift model
 
 CvHG16 models the per-sensor drift rate as

@@ -55,20 +55,23 @@ def _amp(da):
 BASELINE = pathlib.Path(__file__).parent / "data" / "iterate_restore_baseline.nc"
 
 
-def _run_iter(l1_dir, drift_sn, mode):
+def _run_iter(l1_dir, drift_sn, mode, **extra):
     """Run sensor_drift with iterate_subtract on, forcing `drift_sn` as the
-    sole flagged outlier, under the given iterate_mode."""
+    sole flagged outlier, under the given iterate_mode. Extra drift
+    parameters (e.g. two_step_shared) override the defaults."""
+    params = dict(
+        iterate_subtract=True,
+        amplitude_threshold_mK=999.0,
+        manual_outlier_sns=[drift_sn],
+        fit_mode="linear",
+        iterate_mode=mode,
+    )
+    params.update(extra)
     return sensor_drift(
         mooring_name="synthetic",
         l1_grid_dir=l1_dir,
         run_all=True,
-        drift_parameters=dict(
-            iterate_subtract=True,
-            amplitude_threshold_mK=999.0,
-            manual_outlier_sns=[drift_sn],
-            fit_mode="linear",
-            iterate_mode=mode,
-        ),
+        drift_parameters=params,
     )
 
 
@@ -232,14 +235,18 @@ class TestOutputAttrs:
     def test_drift_to_dataarray_writes_provenance_attrs(
         self, synthetic_l1_dir_with_drift
     ):
-        l1_dir, _ = synthetic_l1_dir_with_drift
+        l1_dir, drift_sn = synthetic_l1_dir_with_drift
+        # Force the flag via manual_outlier_sns so the provenance assertions
+        # are independent of the recovered amplitude (under the two-step
+        # default the drifter sits just below the 1.5 mK auto-threshold).
         sd = sensor_drift(
             mooring_name="synthetic",
             l1_grid_dir=l1_dir,
             run_all=True,
             drift_parameters=dict(
                 iterate_subtract=True,
-                amplitude_threshold_mK=1.5,
+                amplitude_threshold_mK=999.0,
+                manual_outlier_sns=[drift_sn],
                 fit_mode="linear",
             ),
         )
@@ -264,14 +271,17 @@ class TestOutputAttrs:
     def test_attrs_round_trip_through_netcdf(
         self, synthetic_l1_dir_with_drift, tmp_path
     ):
-        l1_dir, _ = synthetic_l1_dir_with_drift
+        l1_dir, drift_sn = synthetic_l1_dir_with_drift
+        # Force the flag via manual_outlier_sns (see note above) so the
+        # round-tripped iteration_count is deterministically 1.
         sd = sensor_drift(
             mooring_name="synthetic",
             l1_grid_dir=l1_dir,
             run_all=True,
             drift_parameters=dict(
                 iterate_subtract=True,
-                amplitude_threshold_mK=1.5,
+                amplitude_threshold_mK=999.0,
+                manual_outlier_sns=[drift_sn],
                 fit_mode="linear",
             ),
         )
@@ -309,10 +319,14 @@ class TestIterateModeValidation:
 
 class TestRestoreBackwardCompat:
     def test_restore_matches_pinned_baseline(self, synthetic_l1_dir_with_drift):
-        # Default-path guard: restore-mode drift_fit must reproduce the
-        # baseline captured from the pre-iterate_mode implementation.
+        # Legacy-path guard: restore-mode drift_fit on the single-pass
+        # shared-component path (two_step_shared=False) must reproduce the
+        # baseline captured from the pre-iterate_mode implementation. This
+        # pins the legacy behaviour bit-for-bit now that two-step is the
+        # default; the two-step default path is covered by test_two_step_shared
+        # and the refit design tests.
         l1_dir, drift_sn = synthetic_l1_dir_with_drift
-        sd = _run_iter(l1_dir, drift_sn, "restore")
+        sd = _run_iter(l1_dir, drift_sn, "restore", two_step_shared=False)
         baseline = xr.open_dataarray(BASELINE)
         xr.testing.assert_allclose(sd.drift_fit, baseline)
 

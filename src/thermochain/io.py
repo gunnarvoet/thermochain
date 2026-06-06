@@ -1659,6 +1659,7 @@ class sensor_drift:
             iterate_mode="restore",
             amplitude_threshold_mK=1.5,
             manual_outlier_sns=[],
+            two_step_shared=True,
         )
         for key, value in drift_defaults.items():
             setattr(self, key, value)
@@ -1695,6 +1696,7 @@ class sensor_drift:
             "iterate_mode",
             "amplitude_threshold_mK",
             "manual_outlier_sns",
+            "two_step_shared",
         ]
         for key in parameter_list:
             print(key, ":", getattr(self, key))
@@ -1825,14 +1827,15 @@ class sensor_drift:
             self.n_offset_outliers += ind.sum().data
         return tt
 
-    def select_triplet(self, ni):
-        n = len(self.offsets.sn)
+    def select_triplet(self, ni, source=None):
+        offs = self.offsets if source is None else source
+        n = len(offs.sn)
         if ni == 0:
-            tt = self.offsets.isel(depth=[ni, ni + 1])
+            tt = offs.isel(depth=[ni, ni + 1])
         elif ni == n - 1:
-            tt = self.offsets.isel(depth=[ni - 1, ni])
+            tt = offs.isel(depth=[ni - 1, ni])
         else:
-            tt = self.offsets.isel(depth=[ni - 1, ni, ni + 1])
+            tt = offs.isel(depth=[ni - 1, ni, ni + 1])
         return tt
 
     def calc_first_guess_shared_fluctuating_component(self):
@@ -1895,8 +1898,13 @@ class sensor_drift:
         self.offsets_detrended = self.offsets.copy() - self.fit
 
     def calc_second_guess_shared_fluctuating_component(self):
-        # Calculate a second guess shared fluctuating component from the
-        # detrended offset time series.
+        # Recompute the shared fluctuating component. With two_step_shared
+        # (default) the recompute reads the *detrended* offsets, so each
+        # sensor's interim-fit drift is removed before forming the triplet
+        # mean — this is the CvHG16 second pass. With two_step_shared=False
+        # it reads self.offsets and collapses to the first guess (legacy
+        # single-pass behaviour).
+        source = self.offsets_detrended if self.two_step_shared else None
         n = len(self.offsets.sn)
         # pre-allocate the output DataArray
         self.second_guess_shared_fluct_comp = self.offsets.copy()
@@ -1904,7 +1912,7 @@ class sensor_drift:
             np.ones_like(self.second_guess_shared_fluct_comp) * np.nan
         )
         for ni in range(n):
-            tt = self.select_triplet(ni)
+            tt = self.select_triplet(ni, source=source)
             demeaned = tt - tt.groupby("depth").mean(dim="window")
             shared_component = demeaned.mean(dim="depth")
             self.second_guess_shared_fluct_comp[:, ni] = shared_component

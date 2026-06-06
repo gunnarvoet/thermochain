@@ -155,6 +155,7 @@ class DriftParameters:
     iterate_mode: str = "restore"
     amplitude_threshold_mK: float = 1.5
     manual_outlier_sns: list = field(default_factory=list)
+    two_step_shared: bool = True
 
     def __post_init__(self):
         if self.fit_mode not in _DRIFT_FIT_MODES:
