@@ -1660,6 +1660,7 @@ class sensor_drift:
             amplitude_threshold_mK=1.5,
             manual_outlier_sns=[],
             two_step_shared=True,
+            max_triplet_gap_m=None,
         )
         for key, value in drift_defaults.items():
             setattr(self, key, value)
@@ -1697,6 +1698,7 @@ class sensor_drift:
             "amplitude_threshold_mK",
             "manual_outlier_sns",
             "two_step_shared",
+            "max_triplet_gap_m",
         ]
         for key in parameter_list:
             print(key, ":", getattr(self, key))

@@ -341,7 +341,7 @@ def test_drift_parameters_as_dict_roundtrips_for_sensor_drift():
         "exclude", "polydeg", "outliers_polydeg", "use_spline", "spline_smooth",
         "exclude_sn", "tau0", "tau_bounds", "beta_bounds", "fit_mode",
         "iterate_subtract", "iterate_mode", "amplitude_threshold_mK", "manual_outlier_sns",
-        "two_step_shared",
+        "two_step_shared", "max_triplet_gap_m",
     }
 
 
