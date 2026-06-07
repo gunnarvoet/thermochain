@@ -875,3 +875,68 @@ def test_compute_ctd_offsets_missing_cal_stops_path_raises(ctd_cal_mooring):
     del m.cfg.path["cal_stops"]
     with pytest.raises((KeyError, ValueError), match="cal_stops"):
         m.compute_ctd_offsets()
+
+
+from thermochain.pipeline import STAGE_ORDER  # noqa: E402
+from thermochain.io import ProcessThermistorMooring  # noqa: E402
+
+
+def test_process_l0_delegates_to_run_proc_all(cal_mooring, monkeypatch):
+    """process_l0 is the L0-stage alias and forwards verbatim to run_proc_all."""
+    m = Mooring(cal_mooring)
+    called = []
+    monkeypatch.setattr(m, "run_proc_all", lambda: called.append("ran"))
+    m.process_l0()
+    assert called == ["ran"]
+    # exposed under the L0 vocabulary name (sanity: present on the class)
+    assert hasattr(ProcessThermistorMooring, "run_proc_all")
+
+
+def test_run_executes_chain_end_to_end(l2_mooring):
+    """run(stages=[...]) over the L2 fixture chains make_l2 -> grid_l2."""
+    m = Mooring(l2_mooring)
+    out = m.run(stages=["make_l2", "grid_l2"], segments=["deep"])
+    assert set(out) == {"make_l2", "grid_l2"}
+    assert out["make_l2"]["deep"]["written"] == 3
+    assert out["grid_l2"]["deep"]["written"] == 4
+    gridl2 = m._gridl2_dir()
+    files = sorted(gridl2.glob("testproj_a_deep_L2_*.nc"))
+    assert len(files) == 4
+    da = xr.open_dataarray(files[0])
+    assert da.sizes["depth"] == 3          # all three deep sensors gridded
+
+
+def test_run_honors_canonical_order_and_subset(l2_mooring, monkeypatch):
+    """A reversed/partial stages= runs only those stages, in STAGE_ORDER."""
+    m = Mooring(l2_mooring)
+    calls = []
+    for name in STAGE_ORDER:
+        orig = getattr(m, name)
+
+        def make(n, o):
+            def wrapper(*a, **k):
+                calls.append(n)
+                return o(*a, **k)
+            return wrapper
+
+        monkeypatch.setattr(m, name, make(name, orig))
+    # request the subset reversed; only these two run, in canonical order
+    m.run(stages=["grid_l2", "make_l2"], segments=["deep"])
+    assert calls == ["make_l2", "grid_l2"]
+
+
+def test_run_idempotent_then_overwrite(l2_mooring):
+    """Second run skips existing outputs; overwrite=True forces recompute."""
+    m = Mooring(l2_mooring)
+    m.run(stages=["make_l2", "grid_l2"], segments=["deep"])
+    second = m.run(stages=["make_l2"], segments=["deep"])
+    assert second["make_l2"]["deep"]["written"] == 0
+    assert second["make_l2"]["deep"]["skipped"] == 3
+    third = m.run(stages=["make_l2"], segments=["deep"], overwrite=True)
+    assert third["make_l2"]["deep"]["written"] == 3
+
+
+def test_run_rejects_unknown_stage(cal_mooring):
+    m = Mooring(cal_mooring)
+    with pytest.raises(ValueError, match="unknown stage"):
+        m.run(stages=["frobnicate"])

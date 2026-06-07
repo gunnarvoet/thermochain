@@ -22,6 +22,21 @@ from .io import (  # noqa: F401
 _GRIDDING_KEYS = {"dt", "max_gap", "chunk"}
 _CAL_METHODS = {"linear_interp", "scalar", "scalar_pre_only", "none"}
 
+# Canonical pipeline stage order — the single source of truth for Mooring.run().
+# Dissipation is intentionally excluded (decided 2026-06-07). ``process_l0`` is
+# the public-vocabulary alias of the inherited ``run_proc_all`` (L0 stage).
+STAGE_ORDER = [
+    "process_l0",
+    "compute_ctd_offsets",
+    "cut_and_cal",
+    "grid_l1",
+    "fit_drift",
+    "make_l2",
+    "grid_l2",
+]
+# Stages that do not accept a ``segments`` kwarg.
+_STAGES_NO_SEGMENTS = {"process_l0", "compute_ctd_offsets"}
+
 _OFFSET_CRUISE_RE = re.compile(r"(cruise\d+)")
 
 
@@ -515,6 +530,82 @@ class Mooring(ProcessThermistorMooring):
             name: parse_gridding(seg.get("gridding"), defaults=default_grid)
             for name, seg in self.segments_cfg.items()
         }
+
+    def process_l0(self):
+        """Run the L0 stage (alias of the inherited :meth:`run_proc_all`).
+
+        Provided so the public stage surface reads consistently with the
+        other pipeline stages (``process_l0``, ``cut_and_cal``, ``grid_l1``,
+        …). Delegates verbatim to :meth:`run_proc_all`: it converts every
+        raw sensor file to a clock-calibrated per-sensor L0 NetCDF in
+        ``path.procl0``.
+
+        Returns
+        -------
+        None
+        """
+        return self.run_proc_all()
+
+    def run(self, stages=None, segments=None, overwrite=False):
+        """Run the full pipeline (or a named sub-chain) honoring the config.
+
+        Pure orchestration over the validated stage methods — no new
+        numerical code. The canonical chain (dissipation intentionally
+        excluded) is::
+
+            process_l0 -> compute_ctd_offsets -> cut_and_cal
+              -> grid_l1 -> fit_drift -> make_l2 -> grid_l2
+
+        Stages are always executed in :data:`STAGE_ORDER`; ``stages=`` only
+        *selects* a subset, it does not reorder. The drift stages
+        (``fit_drift`` / ``make_l2`` / ``grid_l2``) already no-op on
+        segments without ``drift: true``, so ``run`` just calls them. Each
+        stage is idempotent (skips existing outputs); ``overwrite=True``
+        forwards to every stage.
+
+        Parameters
+        ----------
+        stages : list of str or None, optional
+            Subset of :data:`STAGE_ORDER` to run (e.g.
+            ``["cut_and_cal", "grid_l1"]`` to skip the expensive L0 step).
+            ``None`` runs the full chain.
+        segments : str, list of str, or None, optional
+            Segment(s) forwarded to the segment-aware stages. ``None``
+            runs every defined (or drift-eligible) segment.
+        overwrite : bool, optional
+            Forwarded to every stage. Default ``False``.
+
+        Returns
+        -------
+        dict
+            ``{stage_name: <that stage's return value>}`` for each stage run.
+
+        Raises
+        ------
+        ValueError
+            If ``stages`` names anything outside :data:`STAGE_ORDER`.
+        """
+        if stages is None:
+            selected = list(STAGE_ORDER)
+        else:
+            unknown = [s for s in stages if s not in STAGE_ORDER]
+            if unknown:
+                raise ValueError(
+                    f"unknown stage(s): {unknown}; allowed: {STAGE_ORDER}"
+                )
+            wanted = set(stages)
+            selected = [s for s in STAGE_ORDER if s in wanted]
+
+        results = {}
+        for name in selected:
+            method = getattr(self, name)
+            if name == "process_l0":
+                results[name] = method()          # run_proc_all takes no args
+            elif name in _STAGES_NO_SEGMENTS:
+                results[name] = method(overwrite=overwrite)
+            else:
+                results[name] = method(segments=segments, overwrite=overwrite)
+        return results
 
     def _segment_names(self, segments):
         """Validate and return a list of segment names.
