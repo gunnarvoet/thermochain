@@ -70,11 +70,8 @@ filterwarnings = [
 ]
 
 [tool.uv.build-backend]
-# Ship the deprecated `thermodrift` alias shim alongside `thermochain`.
-# Defensive: the editable install already exposes all of src/ via .pth, but
-# this makes the two top-level modules explicit. The wheel one-module limit is
-# a Phase-4 (PyPI) concern.
-module-name = ["thermochain", "thermodrift"]
+# Single top-level module (the deprecated `thermodrift` alias shim was removed).
+module-name = ["thermochain"]
 
 [tool.pdm]
 package-type = "library"
