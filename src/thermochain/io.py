@@ -1833,11 +1833,19 @@ class sensor_drift:
         offs = self.offsets if source is None else source
         n = len(offs.sn)
         if ni == 0:
-            tt = offs.isel(depth=[ni, ni + 1])
+            idx = [ni, ni + 1]
         elif ni == n - 1:
-            tt = offs.isel(depth=[ni - 1, ni])
+            idx = [ni - 1, ni]
         else:
-            tt = offs.isel(depth=[ni - 1, ni, ni + 1])
+            idx = [ni - 1, ni, ni + 1]
+        gap = getattr(self, "max_triplet_gap_m", None)
+        if gap is not None:
+            depths = offs.depth.values
+            idx = [j for j in idx if abs(depths[j] - depths[ni]) <= gap]
+            # If both neighbours exceed the gap threshold, idx collapses to [ni]:
+            # the lone centre sensor demeans to 0 -> zero shared component -> the
+            # sensor falls back to its background-fit offset (no neighbour refinement).
+        tt = offs.isel(depth=idx)
         return tt
 
     def calc_first_guess_shared_fluctuating_component(self):

@@ -13,7 +13,7 @@ from scipy.special import gamma as gamma_fn
 from scipy.special import gammainc
 
 
-def write_drift_l1_files(directory, drift_index=6, drift_total_C=5e-3):
+def write_drift_l1_files(directory, drift_index=6, drift_total_C=5e-3, depth=None):
     """Write a synthetic L1-gridded dataset with a strong linear drift on
     one interior sensor, mirroring the MOTIVE A 236127 case.
 
@@ -24,10 +24,12 @@ def write_drift_l1_files(directory, drift_index=6, drift_total_C=5e-3):
 
     Returns the serial number of the drifting sensor.
     """
-    n_depth = 12
+    if depth is None:
+        depth = np.linspace(1000.0, 1200.0, 12)
+    depth = np.asarray(depth, dtype=float)
+    n_depth = len(depth)
     sn = np.array([72100 + i for i in range(n_depth)])
-    depth = np.linspace(1000.0, 1200.0, n_depth)
-    t_mean = 4.0 + 6.0 * np.exp(-(depth - 1000.0) / 200.0)
+    t_mean = 4.0 + 6.0 * np.exp(-(depth - depth[0]) / 200.0)
 
     t_start = np.datetime64("2024-01-01T00:00")
     t_end = np.datetime64("2024-01-13T00:00")
