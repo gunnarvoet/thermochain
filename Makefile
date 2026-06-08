@@ -1,4 +1,4 @@
-.PHONY: lint test docs ghdocs servedocs help
+.PHONY: lint test docs ghdocs servedocs schematics help
 .DEFAULT_GOAL := help
 
 define BROWSER_PYSCRIPT
@@ -44,3 +44,7 @@ ghdocs: ## generate documentation for GitHub Pages (CI-safe, no browser)
 servedocs: ## compile the docs & watch for changes
 	uv run pdoc --math -t .pdoc-theme-gv -d numpy thermochain
 	# $(BROWSER) http://localhost:8080
+
+schematics: ## regenerate schematic figures (docs SVGs + paper PDFs)
+	uv run python schematics/pipeline_schematic.py
+	uv run python schematics/drift_procedure_schematic.py
