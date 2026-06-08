@@ -3051,6 +3051,50 @@ def exp_function(t, t0, m, A, beta, tau):
     return t0 + m * t + A * lower_gamma / beta
 
 
+def evaluate_drift_model(frac_index, fit_type, lin_params, exp_params):
+    """Evaluate a fitted CvHG16 drift model at arbitrary window indices.
+
+    The drift fits are computed against integer *window* indices
+    (``np.arange(n_windows)``), so applying the drift at a sensor's native
+    sample times means evaluating the closed-form model at the (generally
+    fractional) window index each sample maps to.
+
+    Parameters
+    ----------
+    frac_index : array_like
+        Window-index coordinate(s) at which to evaluate the model. Integer
+        values ``0 .. n_windows-1`` are the window centres.
+    fit_type : str
+        ``"lin"`` or ``"exp"``.
+    lin_params : tuple of float or None
+        ``(slope, intercept)`` of the linear fit, in per-window-index
+        units. Required for ``fit_type == "lin"``.
+    exp_params : sequence of float or None
+        The five CvHG16 parameters ``(t0, m, A, beta, tau)`` in the order of
+        `EXP_PARAM_NAMES`. Required for ``fit_type == "exp"``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Drift evaluated at ``frac_index``. For ``"exp"`` the relaxation
+        (incomplete-gamma) term is held at zero for indices < 0, so the
+        pre-first-window extrapolation reduces to the finite linear part
+        ``t0 + m*idx`` and stays continuous at index 0 (where the gamma
+        term is zero anyway).
+    """
+    idx = np.asarray(frac_index, dtype=float)
+    if fit_type == "lin":
+        slope, intercept = lin_params
+        return intercept + slope * idx
+    if fit_type == "exp":
+        t0, m, A, beta, tau = (float(p) for p in exp_params)
+        a = 1.0 / beta
+        z = (np.clip(idx, 0.0, None) / tau) ** beta
+        lower_gamma = scipy.special.gamma(a) * scipy.special.gammainc(a, z)
+        return t0 + m * idx + A * lower_gamma / beta
+    raise ValueError(f"fit_type must be 'lin' or 'exp'; got {fit_type!r}")
+
+
 def calculate_r2(x, xfit):
     """Coefficient of determination R² of a fit `xfit` to data `x`.
 
