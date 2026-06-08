@@ -346,7 +346,7 @@ def build_vertical():
         arrowstyle="-|>", mutation_scale=10, color=A_MAIN, linewidth=1.3,
         shrinkA=1, shrinkB=1, zorder=1,
     ))
-    ax.text((col1_cx + col2_cx) / 2, yc["interim"] + 0.04, LOOP_LABEL,
+    ax.text((col1_cx + col2_cx) / 2, (yc["interim"] + t_("two")) / 2, LOOP_LABEL,
             ha="center", va="center", fontsize=6.0, color=A_MAIN, zorder=3,
             bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none"))
 
