@@ -109,6 +109,7 @@ def cal_diagnostic_attrs(
         cruise,cast,time}``.
     """
     def _one(prefix, ctdcal, applied, t_cal):
+        """Build the flat `<prefix>_*` cal attrs for one endpoint (pre or post)."""
         if ctdcal is not None and sn in ctdcal.sn:
             sel = ctdcal.sel(sn=sn)
             return {
@@ -174,6 +175,7 @@ class DriftParameters:
     max_triplet_gap_m: object = None
 
     def __post_init__(self):
+        """Validate `fit_mode` and `iterate_mode` after dataclass init."""
         if self.fit_mode not in _DRIFT_FIT_MODES:
             raise ValueError(
                 f"fit_mode must be one of {_DRIFT_FIT_MODES}; got {self.fit_mode!r}"
@@ -667,12 +669,15 @@ class Mooring(ProcessThermistorMooring):
         return self.mooring_info.loc[self.mooring_info.index.intersection(sns)]
 
     def _procl0_dir(self):
+        """L0 output directory (`data/proc/l0`) as a `Path`."""
         return Path(self.cfg.path.data.procl0)
 
     def _procl1_dir(self):
+        """L1 output directory (`data/proc/l1`) as a `Path`."""
         return Path(self.cfg.path.data.procl1)
 
     def _procl2_dir(self):
+        """L2 output directory (`data/proc/l2`) as a `Path`."""
         return Path(self.cfg.path.data.procl2)
 
     def _segment_cal_method(self, segment):
@@ -692,6 +697,7 @@ class Mooring(ProcessThermistorMooring):
         cal = self.cfg.get("calibration", {}) or {}
 
         def _load(key):
+            """Load the CTD offset NetCDF named by config key `key` (root-relative)."""
             p = cal.get(key)
             if p is None:
                 return None
@@ -1042,6 +1048,7 @@ class Mooring(ProcessThermistorMooring):
         return eff, False, False  # "none" or "empty"
 
     def _aux_dir(self):
+        """Auxiliary-output directory (e.g. drift NetCDFs) as an absolute `Path`."""
         d = Path(self.cfg.path.aux)
         if not d.is_absolute():
             d = Path(self.cfg.path.root) / d
@@ -1279,12 +1286,14 @@ class Mooring(ProcessThermistorMooring):
         return summary
 
     def _grid_dir(self):
+        """Gridded-output directory as an absolute `Path`."""
         d = Path(self.cfg.path.data.grid)
         if not d.is_absolute():
             d = Path(self.cfg.path.root) / d
         return d
 
     def _grid_filename(self, segment, level, ti):
+        """Build a gridded-chunk file name `<project>_<mooring>_<segment>_L<level>_<stamp>.nc`."""
         stamp = np.datetime_as_string(np.datetime64(ti, "s")).replace("-", "").replace(":", "")
         return (
             f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}"

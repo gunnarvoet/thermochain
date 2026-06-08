@@ -17,6 +17,17 @@ Processing steps are
 
 Individual steps are detailed in the following.
 
+![Configuration-driven thermochain processing pipeline](_static/pipeline_schematic.svg)
+
+*The configuration-driven `thermochain` pipeline. A single per-mooring
+configuration file, together with the sensor sheet, the cal-stops table, and the
+CTD calibration casts, parameterises and feeds a chain of stages that carry the
+raw logger files through the processing levels: clock calibration (L0), cutting
+to the deployment window and in-situ CTD calibration (L1), interpolation onto a
+common depth–time grid (gridded L1), the CvHG16 drift fit applied to the densely
+instrumented segments, and subtraction of the per-sensor drift (L2) to yield the
+final drift-corrected, gridded temperature product.*
+
 # Calibration approach
 
 Differential analyses on dense moored thermistor arrays demand **sub-millikelvin relative accuracy** between sensors on the same chain — more than an order of magnitude better than the $\mathcal{O}(2\times 10^{-3})$ K precision of factory-calibrated commercial RBR Solo and SBE 56 thermistors. The package closes that gap with four chained calibration stages:
@@ -61,6 +72,20 @@ Per window (default 1 day), each sensor's deviation from a smooth time-mean back
 
 Implemented in `thermochain.io.sensor_drift`. With `run_all=True` the class runs the following stages in sequence; each is also callable individually for debugging.
 
+![Schematic of the CvHG16 shared-fluctuation drift procedure](_static/drift_procedure_schematic.svg)
+
+*The CvHG16 shared-fluctuation drift procedure. The windowed background fit and
+first-guess offsets are computed independently in each short (≈ daily) window
+(left); all subsequent steps operate on each sensor's offset time series across
+the full deployment (right). After ±3σ outlier rejection, the shared fluctuating
+component (from each sensor's demeaned neighbour triplet), the offsets, and the
+per-sensor drift fit are estimated in two passes: the first pass yields an
+interim drift fit used to detrend the offsets so the shared component can be
+recomputed (amber), and the second pass forms the cleaned offsets and the final
+per-sensor drift model — linear or exponential, selected by the CvHG16 $R^2$
+criterion — which is subtracted to yield the drift-corrected L2 product. The
+numbered stages below correspond to the boxes in this schematic.*
+
 1. **Background fit** per window — polynomial or smoothing-spline fit in depth to the windowed time-mean profile; each sensor's residual is its first-guess offset for that window. (`windowed_background_fits`, `offsets_from_background_fit`)
 2. **Outlier removal** at $\pm 3\sigma$ on each sensor's offset time series. (`remove_outliers`)
 3. **First-guess shared fluctuating component** — mean of the triplet (sensor + upper neighbour + lower neighbour) after demeaning each member. (`select_triplet`, `calc_first_guess_shared_fluctuating_component`)
@@ -96,6 +121,16 @@ The output is a per-sensor drift trace `drift(sn, time)`; applying it (L2 = L1 �
 The `templates` directory holds templates for
 - Sensor spreadsheet (holding all per-sensor info, e.g. clock calibration times, CTD calibration times, specific pre- and post-deployment notes.
 - Mooring configuration spreadsheet, laying out the configuration of the sensors on the moorings.
+
+# References
+
+The sensor-drift calibration implemented here follows, and is referred to
+throughout as **CvHG16**:
+
+> Cimatoribus, A. A., H. van Haren, and L. Gostiaux (2016): A procedure to
+> compensate for the response drift of a large set of thermistors. *Journal of
+> Atmospheric and Oceanic Technology*, **33** (7), 1495–1508,
+> [doi:10.1175/JTECH-D-15-0243.1](https://doi.org/10.1175/JTECH-D-15-0243.1).
 
 # License
 .. include:: ../../LICENSE

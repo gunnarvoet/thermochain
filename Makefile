@@ -1,4 +1,4 @@
-.PHONY: docs help
+.PHONY: lint test docs ghdocs servedocs help
 .DEFAULT_GOAL := help
 
 define BROWSER_PYSCRIPT
@@ -21,7 +21,7 @@ for line in sys.stdin:
 endef
 export PRINT_HELP_PYSCRIPT
 
-BROWSER := python -c "$$BROWSER_PYSCRIPT"
+BROWSER := uv run python -c "$$BROWSER_PYSCRIPT"
 
 help:
 	@python -c "$$PRINT_HELP_PYSCRIPT" < $(MAKEFILE_LIST)
@@ -36,6 +36,10 @@ docs: ## generate documentation using pdoc
 	rm -rf docs
 	uv run pdoc --math -t .pdoc-theme-gv -d numpy -o docs thermochain
 	$(BROWSER) docs/index.html
+
+ghdocs: ## generate documentation for GitHub Pages (CI-safe, no browser)
+	rm -rf docs
+	PDOC_ALLOW_EXEC=1 pdoc --math -t .pdoc-theme-gv -d numpy -o docs thermochain
 
 servedocs: ## compile the docs & watch for changes
 	pdoc --math -t .pdoc-theme-gv -d numpy thermochain

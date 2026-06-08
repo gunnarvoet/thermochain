@@ -1,71 +1,70 @@
 name: website
 
-# build the documentation whenever there are new commits on main
+# Build the documentation whenever there are new commits on main and
+# publish it to GitHub Pages.
 on:
   push:
     branches:
       - main
-    # Alternative: only build for tags.
-    # tags:
-    #   - '*'
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
 
-# security: restrict permissions for CI jobs.
+# Security: restrict permissions for CI jobs.
 permissions:
   contents: read
+
+# Avoid overlapping deploys; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   # Build the documentation and upload the static HTML files as an artifact.
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
+          # `.pdoc-theme-gv` is a submodule needed by the build.
           submodules: 'true'
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: 3.11
-      - name: Cache pip
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-            ${{ runner.os }}-
+          python-version: '3.11'
+          cache: 'pip'
       - name: Install dependencies
+        # The local editable deps (gvpy, rbrmoored, sbemoored) and mixsea are
+        # not on PyPI, so `pip install .` cannot resolve them from the package
+        # metadata alone — pdoc must import thermochain, so they have to be
+        # present. Install them from their git repositories first, then the
+        # package (whose remaining deps come from PyPI) and pdoc itself.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pdoc numpy
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          python -m pip install \
+            "git+https://github.com/gunnarvoet/gvpy.git" \
+            "git+https://github.com/gunnarvoet/rbrmoored.git" \
+            "git+https://github.com/gunnarvoet/sbemoored.git" \
+            "git+https://github.com/modscripps/mixsea.git@main"
+          python -m pip install pdoc
           python -m pip install .
-
-      # The following is for not using the cache action, but it didn't quite work.
-        # with:
-        #   python-version: '3.11'
-        #   cach: 'pip'
-      # - run: pip install pdoc
-      # - run: pip install -r requirements.txt
-      # - run: pip install -e .
-
       - name: Build docs
-        run: make docs
-
-      - name: upload
-        uses: actions/upload-pages-artifact@v2
+        run: make ghdocs
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
           path: docs/
 
-  # Deploy the artifact to GitHub pages.
-  # This is a separate job so that only actions/deploy-pages has the necessary permissions.
+  # Deploy the artifact to GitHub Pages. Separate job so that only
+  # actions/deploy-pages holds the elevated permissions.
   deploy:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       pages: write
       id-token: write
+      actions: read
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v2
+        uses: actions/deploy-pages@v4

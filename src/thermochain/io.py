@@ -1,9 +1,28 @@
 #!/usr/bin/env python
 # coding: utf-8
-"""
-I/O functions.
+"""I/O, configuration parsing, and processing algorithms.
 
-Generate a processing object with `ProcessThermistorMooring`.
+This is the core module of `thermochain`. It collects everything that turns raw
+RBR Solo / SBE 56 logger files into a drift-corrected, depth–time-gridded
+temperature product:
+
+- **Configuration** — `load_config` / `load_config_box` parse the per-mooring
+  YAML config into a path-resolved `Box`.
+- **Spreadsheets** — `sensor_sheet_load` and `mooring_sheet_load` read the
+  sensor and mooring layout tables; `validate_thermistor_metadata`
+  cross-checks them.
+- **Processing object** — `ProcessThermistorMooring` builds a per-sensor
+  processing database and dispatches raw → L0 conversion (clock calibration)
+  to `rbrmoored` / `sbemoored`.
+- **L1 calibration & gridding** — `rbr_cut_and_cal` / `rbr_cut_and_cal_interp`
+  cut to the deployment window and apply the CTD offset; `grid_thermistors`
+  interpolates all sensors onto a shared `(depth, time)` grid.
+- **Drift calibration** — `sensor_drift` implements the Cimatoribus et al.
+  (2016) shared-fluctuation method (see the package overview for the full
+  description).
+
+The high-level, config-driven orchestration of these primitives lives in
+`thermochain.pipeline.Mooring`.
 """
 
 import functools
@@ -157,6 +176,28 @@ def load_config_box(configfile, project_root=None, data_root=None) -> Box:
 
 
 def mooring_sheet_load(path):
+    """Load a per-mooring layout spreadsheet into a `pandas.DataFrame`.
+
+    Reads the mooring sheet (`type,SN,height,depth`; see `templates/`),
+    indexes it by serial number, and normalises the `type` column via
+    `unify_sensor_type` so the many textual SBE/RBR variants collapse to
+    `sbe` / `rbr`.
+
+    Parameters
+    ----------
+    path : pathlib.Path or str
+        Path to the per-mooring layout CSV.
+
+    Returns
+    -------
+    mooring_info : pandas.DataFrame
+        Mooring layout indexed by `SN`, with a normalised `type` column.
+
+    See Also
+    --------
+    sensor_sheet_load : Load the (multi-mooring) per-sensor spreadsheet.
+    validate_thermistor_metadata : Cross-check sensor sheet against layouts.
+    """
     mooring_info = pd.read_csv(path, sep=",", header=0, index_col="SN")
     unify_sensor_type(mooring_info)
     return mooring_info
@@ -470,11 +511,48 @@ def proc_db_generate(sensor_sheet):
 
 
 def proc_db_assign_mooring(proc_db, mooring_id, sn_list):
+    """Tag the processing-DB rows for `sn_list` with a mooring id (in place).
+
+    Parameters
+    ----------
+    proc_db : pandas.DataFrame
+        Processing database from `proc_db_generate`, indexed by SN.
+    mooring_id : str
+        Mooring label to write into the `mooring` column.
+    sn_list : sequence of int
+        Serial numbers belonging to this mooring.
+    """
     sn_mask = [sni in sn_list for sni in proc_db.index]
     proc_db.loc[sn_mask, "mooring"] = mooring_id
 
 
 def get_file_name(sn, data_dir, type):
+    """Find the single data file for a serial number in a directory.
+
+    Globs `data_dir` for the file belonging to `sn`, handling the
+    instrument-specific naming conventions (RBR `.rsk` with a 6- or
+    5-digit SN, SBE `SBE056<sn>.csv`) and the processed `.nc` / `.png`
+    outputs. Hidden files are ignored.
+
+    Parameters
+    ----------
+    sn : int
+        Sensor serial number.
+    data_dir : pathlib.Path
+        Directory to search.
+    type : {"rbr", "sbe", "nc", "png"}
+        Raw instrument type, or the processed-output extension.
+
+    Returns
+    -------
+    pathlib.Path or None
+        The matching file, or `None` if no file matches.
+
+    Raises
+    ------
+    OSError
+        If more than one (non-hidden) file matches `sn`.
+    """
     if type == "rbr":
         extension = "rsk"
         files = list(data_dir.glob(f"*{sn:06}*.{extension}"))
@@ -507,6 +585,26 @@ def get_file_name(sn, data_dir, type):
 
 
 def proc_db_update_files(proc_db, data_raw, data_out, figure_out):
+    """Refresh the file-existence flags in the processing database (in place).
+
+    For each serial number, checks whether the raw input file, the
+    processed L0 NetCDF, and the L0 figure exist, and sets the
+    `raw_data_exists`, `processed`, and `figure_exists` columns
+    accordingly. When a `time_offset_applied` column is present, it is
+    populated from the L0 file's attribute (see
+    `_read_time_offset_applied`).
+
+    Parameters
+    ----------
+    proc_db : pandas.DataFrame
+        Processing database from `proc_db_generate`, indexed by SN.
+    data_raw : pathlib.Path
+        Raw input directory.
+    data_out : pathlib.Path
+        Processed L0 output directory.
+    figure_out : pathlib.Path
+        L0 figure directory.
+    """
     has_offset_col = "time_offset_applied" in proc_db.columns
     for g, v in proc_db.groupby("SN"):
         f = get_file_name(g, data_dir=data_raw, type=v.type.item())
@@ -547,6 +645,7 @@ def rbr_save_ctd_cal_time_series(l0_data, ctd_time, save_dir):
     files = sorted(l0_data.glob("*.nc"))
 
     def save_ctd_cal(file, ctd_time):
+        """Write the slice of one L0 file covering the CTD cal cast, if present."""
         datestr = ctd_time.start[:10].replace("-", "")
         outname = f"{file.stem[: file.stem.find('_')]}_ctd_cal_cast_{datestr}.nc"
         outpath = save_dir.joinpath(outname)
@@ -563,6 +662,23 @@ def rbr_save_ctd_cal_time_series(l0_data, ctd_time, save_dir):
 
 
 def rbr_load_cals(cal_dir):
+    """Load per-sensor CTD calibration time series and stack them onto one axis.
+
+    Opens every `.nc` file in `cal_dir`, interpolates each onto the time
+    axis of the first file, and concatenates them along a new `n`
+    dimension, attaching each file's `SN` attribute as the `sn`
+    coordinate.
+
+    Parameters
+    ----------
+    cal_dir : pathlib.Path
+        Directory of per-sensor CTD-cal-cast NetCDF files.
+
+    Returns
+    -------
+    xr.DataArray
+        Calibration series stacked along `n`, with an `sn` coordinate.
+    """
     calfiles = sorted(cal_dir.glob("*.nc"))
     cals = [xr.open_dataarray(calfile) for calfile in calfiles]
     sns = [ci.attrs["SN"] for ci in cals]
@@ -576,6 +692,25 @@ def rbr_load_cals(cal_dir):
 
 
 def plot_zoom(ax, ts, rbr, ctd, add_legend=False):
+    """Plot thermistor and reference-CTD temperatures over a time slice.
+
+    Draws all thermistor traces (thin grey) together with the two CTD
+    sensors (`t1`, `t2`) over the window `ts` on a single axis; used as
+    the per-panel helper for `plot_cal_stop` / `plot_multiple_cal_stop`.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Target axis.
+    ts : slice
+        Time slice to plot.
+    rbr : xr.DataArray
+        Thermistor temperatures (dim `n`/`time`).
+    ctd : xr.Dataset
+        Reference CTD with `t1`, `t2` variables.
+    add_legend : bool, optional
+        Whether to draw a legend. Default `False`.
+    """
     t = rbr.sel(time=ts)
     t.plot(hue="n", add_legend=False, linewidth=0.75, color="k", alpha=0.3, ax=ax)
     ctd.t1.sel(time=ts).plot(color="C0", linewidth=1, label="CTD 1", ax=ax)
@@ -696,6 +831,24 @@ class ProcessThermistorMooring:
         )
 
     def get_clock_cals(self, sn):
+        """Return the clock-calibration cast time(s) for a sensor.
+
+        Reads `time_cal1` / `time_cal2` from the processing database and
+        drops any `NaT`. The shape of the result matches what the
+        downstream `rbrmoored` / `sbemoored` `proc` routines expect for
+        their `cal_time` argument.
+
+        Parameters
+        ----------
+        sn : int
+            Sensor serial number.
+
+        Returns
+        -------
+        tuple of np.datetime64, np.datetime64, or None
+            Both cast times as a tuple, a single time, or `None` when no
+            clock-cal time is available.
+        """
         cal1 = self.proc_db.loc[sn]["time_cal1"].to_datetime64()
         cal2 = self.proc_db.loc[sn]["time_cal2"].to_datetime64()
         cals = []
@@ -711,6 +864,23 @@ class ProcessThermistorMooring:
         return cals
 
     def get_clock_reads(self, sn):
+        """Return the on-deck logger/reference clock readouts for an SBE sensor.
+
+        SBE 56 clock correction brackets the offset with the logger and
+        reference (UTC) clock readouts taken on deck, stored in the sensor
+        sheet as `clock_read_logger` / `clock_read_utc`. These are passed
+        to `sbemoored.sbe56.proc` as `time_instrument` / `time_utc`.
+
+        Parameters
+        ----------
+        sn : int
+            Sensor serial number.
+
+        Returns
+        -------
+        inst, utc : np.datetime64
+            The logger and reference (UTC) clock readouts.
+        """
         utc = self.sensor_info.loc[sn]["clock_read_utc"].to_datetime64()
         inst = self.sensor_info.loc[sn]["clock_read_logger"].to_datetime64()
         return inst, utc
@@ -752,6 +922,23 @@ class ProcessThermistorMooring:
         return t
 
     def run_proc(self, sn, show_plot=False):
+        """Dispatch raw → L0 processing for one sensor by instrument type.
+
+        Looks up the sensor's normalised `type` and routes to
+        `run_proc_single_rbr` or `run_proc_single_sbe`.
+
+        Parameters
+        ----------
+        sn : int
+            Sensor serial number.
+        show_plot : bool, optional
+            Forwarded to the instrument `proc` routine. Default `False`.
+
+        Returns
+        -------
+        xr.DataArray or None
+            The processed L0 time series, or `None` for an unknown type.
+        """
         ttype = self.sensor_info.loc[sn].type
         match ttype:
             case "rbr":
@@ -772,6 +959,30 @@ class ProcessThermistorMooring:
 
 
 def rbr_ctd_cal_find_offset(ts, rbr, ctd):
+    """Compute per-sensor CTD-minus-thermistor offsets over a cal-stop window.
+
+    During a CTD calibration stop the rosette and the thermistors sit at
+    the same depth, so the time-mean difference between the reference CTD
+    temperature and each thermistor is that sensor's calibration offset.
+    Offsets are computed against CTD sensor 1, CTD sensor 2, and their
+    mean, with the corresponding standard deviations as a quality
+    indicator.
+
+    Parameters
+    ----------
+    ts : slice
+        Time slice bracketing the calibration stop.
+    rbr : xr.DataArray
+        Thermistor temperatures with an `n` dimension and `sn` coordinate.
+    ctd : xr.Dataset
+        Reference CTD with `t1`, `t2` variables.
+
+    Returns
+    -------
+    xr.Dataset
+        `mean_diff` and `std_diff` along `(sn, m)` where `m` selects the
+        reference (`both`, `1`, `2`), plus the per-sensor `mean_temp`.
+    """
     ctdm1 = ctd.t1.sel(time=ts).mean().data
     ctdm2 = ctd.t2.sel(time=ts).mean().data
     print(f"Difference between CTD sensor 1 & 2 mean values: {ctdm1 - ctdm2:.4e}°C")
@@ -807,6 +1018,25 @@ def rbr_ctd_cal_find_offset(ts, rbr, ctd):
 
 
 def rbr_load_proc_level0(sn, l0dir):
+    """Open the L0 NetCDF for a serial number.
+
+    Parameters
+    ----------
+    sn : int
+        Sensor serial number.
+    l0dir : pathlib.Path
+        L0 output directory.
+
+    Returns
+    -------
+    xr.DataArray or None
+        The L0 time series, or `None` if no file matches.
+
+    Raises
+    ------
+    OSError
+        If more than one file matches `sn`.
+    """
     files = list(l0dir.glob(f"*{sn:06}*.nc"))
     files = _ignore_hidden_files(files)
     if len(files) == 1:
@@ -818,6 +1048,25 @@ def rbr_load_proc_level0(sn, l0dir):
 
 
 def rbr_load_proc_level1(sn, l0dir):
+    """Open the L1 NetCDF for a serial number.
+
+    Parameters
+    ----------
+    sn : int
+        Sensor serial number.
+    l0dir : pathlib.Path
+        L1 output directory (argument named `l0dir` for historical reasons).
+
+    Returns
+    -------
+    xr.DataArray or None
+        The L1 time series, or `None` if no file matches.
+
+    Raises
+    ------
+    OSError
+        If more than one file matches `sn`.
+    """
     files = list(l0dir.glob(f"*{sn:06}*.nc"))
     files = _ignore_hidden_files(files)
     if len(files) == 1:
@@ -829,14 +1078,33 @@ def rbr_load_proc_level1(sn, l0dir):
 
 
 def rbr_find_last_time_stamp(thermistor):
+    """Return the last time stamp of a thermistor record (`np.datetime64`)."""
     return thermistor.time.isel(time=-1).data
 
 
 def rbr_find_gaps(thermistor):
+    """Find sampling gaps in a thermistor record (thin alias for `find_gaps`)."""
     return find_gaps(thermistor)
 
 
 def find_gaps(thermistor):
+    """Return time stamps where the sample spacing departs from the nominal rate.
+
+    Compares successive time differences against the `sampling period in s`
+    attribute and flags any spacing more than 0.5 s off nominal (longer
+    *or* shorter), so both dropouts and duplicate/early samples surface.
+
+    Parameters
+    ----------
+    thermistor : xr.DataArray
+        Record with a `time` coordinate and a `sampling period in s`
+        attribute.
+
+    Returns
+    -------
+    xr.DataArray
+        The off-nominal time differences, indexed by their `time`.
+    """
     td = thermistor.time.diff(dim="time")
     dt = np.timedelta64(int(thermistor.attrs["sampling period in s"] * 1000), "ms")
     tdi = td.where(
@@ -891,6 +1159,24 @@ def _insert_gap_nans(da, max_gap):
 
 
 def rbr_find_first_long_gap(tdi):
+    """First long gap, with its `time` coordinate shifted to the gap start.
+
+    Wraps `find_first_long_gap` and rewrites the returned point's `time`
+    coordinate from the gap *end* to the gap *start* (`time - gap`), so it
+    can be used directly as the L1 cut-off when a deployment-killing
+    outage occurs.
+
+    Parameters
+    ----------
+    tdi : xr.DataArray
+        Off-nominal time differences from `find_gaps`.
+
+    Returns
+    -------
+    xr.DataArray or np.datetime64
+        The first long gap (with `time` at the gap start), or `NaT` if
+        there is none.
+    """
     t0 = find_first_long_gap(tdi)
     if ~np.isnat(t0):
         t0["time"] = (t0.time - t0).data
@@ -898,6 +1184,18 @@ def rbr_find_first_long_gap(tdi):
 
 
 def find_first_long_gap(tdi):
+    """Return the first gap longer than one hour, or `NaT` if there is none.
+
+    Parameters
+    ----------
+    tdi : xr.DataArray
+        Off-nominal time differences from `find_gaps`.
+
+    Returns
+    -------
+    xr.DataArray or np.datetime64
+        The first gap exceeding 1 h (indexed by its `time`), or `NaT`.
+    """
     ti = tdi > np.timedelta64(1, "h")
     if np.any(ti):
         t = tdi.where(ti, drop=True)
@@ -908,6 +1206,26 @@ def find_first_long_gap(tdi):
 
 
 def rbr_apply_ctd_offset(thermistor, sn, ctdcal):
+    """Add a single scalar CTD calibration offset to a thermistor series.
+
+    The scalar-offset counterpart to `apply_interpolated_ctd_offset`,
+    used when only one CTD calibration endpoint is available. If `sn` has
+    no entry in `ctdcal` the series is returned unchanged.
+
+    Parameters
+    ----------
+    thermistor : xr.DataArray
+        Uncalibrated thermistor series.
+    sn : int
+        Sensor serial number.
+    ctdcal : xr.DataArray
+        Per-sensor offsets indexed by `sn`.
+
+    Returns
+    -------
+    xr.DataArray
+        The offset-corrected series (or the input unchanged if no offset).
+    """
     if sn in ctdcal.sn:
         cal = ctdcal.sel(sn=sn).data
         return thermistor + cal
@@ -973,6 +1291,39 @@ def apply_interpolated_ctd_offset(
 def rbr_cut_and_cal(
     sn, l0dir, l1dir, ctdcal, cut_beg, cut_end, end_manually, mooring_name, sensor_type
 ):
+    """Cut one sensor to the deployment window and apply a scalar CTD offset.
+
+    Loads the L0 record, shortens the cut window on the fly when the
+    sensor stopped early (`rbr_find_last_time_stamp`), hit a
+    deployment-killing gap (`rbr_find_first_long_gap`), or has an explicit
+    `end_manually` override, then trims to `(cut_beg, t1)` and applies the
+    scalar CTD offset via `rbr_apply_ctd_offset`. The result is written to
+    `l1dir` as `<mooring>__<type>__<sn>_L1.nc`; an existing L1 file is
+    loaded and returned instead of being recomputed (idempotent).
+
+    For the linear-in-time pre→post calibration variant see
+    `rbr_cut_and_cal_interp`.
+
+    Parameters
+    ----------
+    sn : int
+        Sensor serial number.
+    l0dir, l1dir : pathlib.Path
+        L0 input and L1 output directories.
+    ctdcal : xr.DataArray
+        Per-sensor scalar CTD offsets indexed by `sn`.
+    cut_beg, cut_end : np.datetime64
+        Nominal deployment start and end.
+    end_manually : dict
+        Optional per-sensor `{sn: np.datetime64}` early-cut overrides.
+    mooring_name, sensor_type : str
+        Used to build the output file name.
+
+    Returns
+    -------
+    xr.DataArray
+        The cut, calibrated L1 series.
+    """
     savename = f"{mooring_name.lower().replace(' ', '_')}__{sensor_type.lower()}__{sn:06}_L1.nc"
     savepath = l1dir.joinpath(savename)
     if savepath.exists():
@@ -1271,6 +1622,7 @@ def find_outliers(t, exclusion_criteria, polyfit_order=8, plot=True):
         xn3 = xn2
 
     def plot_fits(ax, z, mt, py, py2, xn, xn2, xn3, second_fit):
+        """Plot one window's background-fit profile(s) and flagged outliers."""
         ax.plot(mt[~xn], z[~xn], linestyle="", marker="x", color="0.3")
         # ax.plot(mt[xn], z[xn], linestyle='', marker='.')
 
@@ -1601,7 +1953,49 @@ def correct_offset(
 
 
 class sensor_drift:
-    """Determine sensor drift. Following the method in Cimatoribus et al. (2016)."""
+    """Estimate per-sensor drift with the Cimatoribus et al. (2016) method.
+
+    Implements the **CvHG16** shared-fluctuation drift procedure (see the
+    package overview, `thermochain`, for the full method and schematic).
+    The class operates on the gridded L1 NetCDF files of one mooring: it
+    fits a smooth background profile per time window, builds each sensor's
+    offset time series, separates the drift from the neighbour-shared
+    fluctuating signal in two passes, and fits the CvHG16 drift model to
+    the cleaned offsets.
+
+    With `run_all=True` the constructor executes every stage in sequence;
+    otherwise the background fit and outlier removal run on construction
+    and each later stage (e.g. `calc_first_guess_shared_fluctuating_component`,
+    `fit_cleaned_offsets`) is callable individually for debugging. The
+    estimated drift trace is available via `drift_to_dataarray` /
+    `drift_to_netcdf`.
+
+    Parameters
+    ----------
+    mooring_name : str
+        Mooring label; used in output file names and plot titles.
+    l1_grid_dir : pathlib.Path
+        Directory of gridded L1 NetCDF chunks for the mooring.
+    last_window : int, optional
+        If set, truncate the offset time series to the first `last_window`
+        windows (useful for partial/early analysis). Default `None`.
+    run_all : bool, optional
+        Run the full stage sequence on construction. Default `False`.
+    drift_parameters : dict, optional
+        Overrides for the drift defaults (see `parse_drift_parameters`).
+    first_n_chunks : int, optional
+        Process only the first N gridded files (smoke tests). Default `None`.
+    file_pattern : str, optional
+        Glob for selecting gridded L1 files. Default `"*.nc"`.
+    window_length : np.timedelta64, optional
+        Background-fit window size. Default 1 day.
+
+    Notes
+    -----
+    The reference is Cimatoribus, van Haren & Gostiaux (2016),
+    *J. Atmos. Oceanic Technol.*, **33**(7), 1495–1508,
+    doi:10.1175/JTECH-D-15-0243.1.
+    """
 
     def __init__(
         self,
@@ -1644,6 +2038,25 @@ class sensor_drift:
                 self.iterate_drift_subtraction()
 
     def parse_drift_parameters(self, drift_parameters):
+        """Set drift parameters from the defaults, overridden by `drift_parameters`.
+
+        Establishes the default drift configuration (background-fit degree
+        / spline smoothing, outlier-exclusion thresholds, CvHG16 fit mode
+        and `tau`/`beta` bounds, the iterate-subtract behaviour, etc.) as
+        instance attributes, then overrides any key supplied in
+        `drift_parameters`. `fit_mode` and `iterate_mode` are validated.
+
+        Parameters
+        ----------
+        drift_parameters : dict or None
+            Overrides for any of the default parameters.
+
+        Raises
+        ------
+        ValueError
+            If `fit_mode` is not `"linear"`/`"auto"`/`"exp"` or
+            `iterate_mode` is not `"restore"`/`"refit"`.
+        """
         drift_defaults = dict(
             exclude=[1e-2, 5e-3],
             polydeg=8,
@@ -1678,6 +2091,7 @@ class sensor_drift:
             )
 
     def print_drift_parameters(self):
+        """Print the active drift parameters for a processing run."""
         parameter_list = [
             "l1_grid_dir",
             "mooring_name",
@@ -1705,6 +2119,17 @@ class sensor_drift:
         print("\n")
 
     def list_gridded_level1_files(self, first_n_chunks):
+        """Collect the sorted gridded-L1 file list for the mooring.
+
+        Globs `self.l1_grid_dir` with `self.file_pattern` (default
+        `"*.nc"`), drops hidden files, and optionally keeps only the first
+        `first_n_chunks`. Sets `self.files_gridded_level1`.
+
+        Parameters
+        ----------
+        first_n_chunks : int or None
+            Keep only the first N files, or all when `None`.
+        """
         # config = io.load_config()
         # gridded_path_l1 = config.data.gridded.thermistors.level1[
         #     f"mavs{self.mooring_id}"
@@ -1744,6 +2169,7 @@ class sensor_drift:
         pending = {}  # window_idx -> list of materialised time slices
 
         def _flush(w):
+            """Background-fit the assembled slices of completed window `w`."""
             slices = pending.pop(w)
             full = (
                 xr.concat(slices, dim="time").sortby("time")
@@ -1818,6 +2244,22 @@ class sensor_drift:
         )
 
     def remove_outliers_one_sensor(self, tt):
+        """Mask one sensor's offsets outside the median ±3σ band as NaN.
+
+        Applied per sensor via `groupby("depth").apply` from
+        `remove_outliers`; increments `self.n_offset_outliers` by the
+        number masked.
+
+        Parameters
+        ----------
+        tt : xr.DataArray
+            One sensor's offset time series along `window`.
+
+        Returns
+        -------
+        xr.DataArray
+            The series with outliers replaced by NaN.
+        """
         tt = tt.squeeze()
         ttm = tt.median(dim="window")
         tts = tt.std(dim="window")
@@ -1830,6 +2272,29 @@ class sensor_drift:
         return tt
 
     def select_triplet(self, ni, source=None):
+        """Select sensor `ni` together with its vertical neighbours.
+
+        Returns the sensor and its immediate upper/lower neighbours (a
+        pair at the array ends), the stack from which the shared
+        fluctuating component is built. When `max_triplet_gap_m` is set,
+        neighbours farther than that vertical distance are dropped; if
+        both neighbours exceed it the triplet collapses to the centre
+        sensor alone, which demeans to zero shared component so the sensor
+        falls back to its background-fit offset.
+
+        Parameters
+        ----------
+        ni : int
+            Index of the centre sensor along the `depth` axis.
+        source : xr.DataArray, optional
+            Offsets to draw from; defaults to `self.offsets`. The
+            second pass passes the detrended offsets here.
+
+        Returns
+        -------
+        xr.DataArray
+            The selected triplet (or pair / singleton) along `depth`.
+        """
         offs = self.offsets if source is None else source
         n = len(offs.sn)
         if ni == 0:
@@ -1871,6 +2336,16 @@ class sensor_drift:
         self.offsets_second_guess = self.offsets - self.first_guess_shared_fluct_comp
 
     def fit_second_guess(self):
+        """Fit the interim drift model to the second-guess offsets and detrend.
+
+        Fits a per-sensor drift model to `offsets_second_guess` according
+        to `fit_mode` (always computes the linear fit as a cheap fallback;
+        adds the CvHG16 exponential fit for `"exp"`/`"auto"`, with `"auto"`
+        choosing per sensor via the R² criterion). The selected fit is
+        stored in `self.fit` and removed from the original offsets to give
+        `self.offsets_detrended`, which feeds the CvHG16 second pass in
+        `calc_second_guess_shared_fluctuating_component`.
+        """
         # Linear fit is always computed — cheap and needed as fallback.
         self.second_guess_linfit = xr.apply_ufunc(
             linfit_ufunc,
@@ -1908,6 +2383,16 @@ class sensor_drift:
         self.offsets_detrended = self.offsets.copy() - self.fit
 
     def calc_second_guess_shared_fluctuating_component(self):
+        """Recompute the shared fluctuating component (CvHG16 second pass).
+
+        Rebuilds each sensor's shared component from the demeaned neighbour
+        triplet. With `two_step_shared=True` (default) it reads the
+        *detrended* offsets, so each sensor's interim-fit drift is removed
+        before the triplet mean — this is the CvHG16 second pass. With
+        `two_step_shared=False` it reads `self.offsets` and collapses to the
+        first guess (legacy single-pass behaviour). Sets
+        `self.second_guess_shared_fluct_comp`.
+        """
         # Recompute the shared fluctuating component. With two_step_shared
         # (default) the recompute reads the *detrended* offsets, so each
         # sensor's interim-fit drift is removed before forming the triplet
@@ -1928,11 +2413,22 @@ class sensor_drift:
             self.second_guess_shared_fluct_comp[:, ni] = shared_component
 
     def calc_cleaned_offsets(self):
+        """Form the cleaned offsets: original offsets minus the recomputed
+        second-guess shared fluctuating component. Sets `self.offsets_clean`."""
         # Calculate cleaned offset time series by removing the 2nd guess shared
         # fluctuating component.
         self.offsets_clean = self.offsets - self.second_guess_shared_fluct_comp
 
     def fit_cleaned_offsets(self):
+        """Fit the CvHG16 drift model to the cleaned offsets — the final drift.
+
+        Fits the per-sensor drift to `offsets_clean` according to
+        `fit_mode` (linear, exponential, or per-sensor `"auto"` selection
+        via the R² criterion), storing the result in `self.drift_fit`, the
+        chosen model per sensor in `self.fit_type`, and — for the
+        exponential branch — the five CvHG16 parameters in
+        `self.drift_exp_params`.
+        """
         # Fit the clean offset time series. This is the final sensor drift.
         self.drift_linfit = xr.apply_ufunc(
             linfit_ufunc,
@@ -1991,6 +2487,7 @@ class sensor_drift:
 
     @staticmethod
     def _sensor_axis_coords(da):
+        """Return the `depth`/`sn` coords of `da` as a dict (for sensor-axis arrays)."""
         return {c: da.coords[c] for c in ("depth", "sn") if c in da.coords}
 
     def _select_fit_per_sensor(self, offsets, linfit, expfit):
@@ -2208,6 +2705,19 @@ class sensor_drift:
         self.drift = out
 
     def drift_to_netcdf(self, path, suffix=None):
+        """Write the estimated drift trace to a NetCDF file.
+
+        Builds the drift DataArray via `drift_to_dataarray` and saves it as
+        `drift_<mooring_name>[_<suffix>].nc` under `path`.
+
+        Parameters
+        ----------
+        path : pathlib.Path
+            Output directory.
+        suffix : str, optional
+            Extra tag appended to the file name (e.g. a processing
+            variant). Default `None`.
+        """
         self.drift_to_dataarray()
         # config = io.load_config()
         # savename = config.data.aux.thermistors.drift[f"{self.mooring_name}"]
@@ -2225,6 +2735,14 @@ class sensor_drift:
         self.drift.to_netcdf(savepath, mode="w")
 
     def plot_sensor_drift_offsets(self):
+        """Plot the offset stages and shared component as `(depth, window)` panels.
+
+        Diagnostic overview: the top row shows the offset estimates (1st
+        guess → outliers removed → 2nd guess → detrended → cleaned) and the
+        bottom row the first- and second-guess shared fluctuating
+        components, all as depth–window pcolormeshes on a shared ±0.01 °C
+        scale.
+        """
         # Plot various stages of the offset time series and their shared
         # fluctuating component.
         fig = plt.figure(figsize=(9, 8), constrained_layout=True)
@@ -2274,6 +2792,7 @@ class sensor_drift:
             axi.set(ylabel="")
 
     def plot_offsets_violin(self):
+        """Violin plot of each sensor's cleaned-offset distribution vs. depth."""
         fig, ax = plt.subplots(
             nrows=1, ncols=1, figsize=(5, 5), constrained_layout=True
         )
@@ -2299,6 +2818,18 @@ class sensor_drift:
         ax.set(ylabel="depth [m]")
 
     def plot_components(self, zi):
+        """Overlay offsets, shared component, and the interim fits for one sensor.
+
+        For the sensor at depth index `zi` (and its two neighbours), plots
+        the offsets, the first-guess shared component, the second-guess
+        offsets, and the linear and exponential interim fits — a quick way
+        to see how the decomposition behaves at a single sensor.
+
+        Parameters
+        ----------
+        zi : int
+            Depth-axis index of the sensor of interest.
+        """
         fig, ax = gv.plot.quickfig()
         self.offsets.isel(depth=[zi - 1, zi, zi + 1]).plot(
             hue="depth", ax=ax, color="k", alpha=0.7
@@ -2317,6 +2848,19 @@ class sensor_drift:
         )
 
     def plot_drift_sensor_and_neighbors(self, zi):
+        """Plot one sensor's drift fit alongside its neighbours' offsets.
+
+        Two stacked panels for the sensor at depth index `zi`: the top
+        shows the sensor's triplet offsets and the shared fluctuating
+        component, the bottom the cleaned offsets with the final drift fit
+        — the per-sensor QC figure produced en masse by
+        `plot_drift_all_sensors`.
+
+        Parameters
+        ----------
+        zi : int
+            Depth-axis index of the sensor of interest.
+        """
         fig, (ax0, ax1) = plt.subplots(
             nrows=2,
             ncols=1,
@@ -2419,6 +2963,18 @@ class sensor_drift:
         fig.suptitle(f"SN {sn} @ {depth_m:3.1f}m — iteration diagnostic")
 
     def plot_drift_all_sensors(self, figdir, suffix=None):
+        """Save a per-sensor drift-fit figure for every sensor on the mooring.
+
+        Loops over all sensors, calling `plot_drift_sensor_and_neighbors`
+        and writing each to `figdir` as `<mooring>_fit_<sn>[_<suffix>].png`.
+
+        Parameters
+        ----------
+        figdir : pathlib.Path
+            Output figure directory.
+        suffix : str, optional
+            Extra tag appended to each file name. Default `None`.
+        """
         n = len(self.offsets.sn)
         print(f"Saving figures to {figdir}")
         for ni in range(n):
@@ -2495,6 +3051,20 @@ def exp_function(t, t0, m, A, beta, tau):
 
 
 def calculate_r2(x, xfit):
+    """Coefficient of determination R² of a fit `xfit` to data `x`.
+
+    Parameters
+    ----------
+    x : array_like
+        Observed values (no NaNs).
+    xfit : array_like
+        Fitted values at the same points.
+
+    Returns
+    -------
+    float
+        ``1 - SS_res / SS_tot``.
+    """
     xm = np.mean(x)
     SSres = np.sum((x - xfit) ** 2)
     SStot = np.sum((x - xm) ** 2)
@@ -2598,6 +3168,28 @@ def expfit_ufunc(
 
 
 def lin_or_exp(x, xlin, xexp, return_type=False):
+    r"""Choose between a linear and an exponential fit by the CvHG16 R criterion.
+
+    Prefers the exponential fit only when it explains a substantial
+    fraction of the variance the linear fit leaves, i.e. when
+    $R_\gamma > R_l + 0.3\,(1 - R_l)$ with $R = \sqrt{R^2}$ the
+    coefficients of determination of the two fits (CvHG16 §4a).
+
+    Parameters
+    ----------
+    x : xr.DataArray
+        Offset series being fit (may contain NaNs).
+    xlin, xexp : xr.DataArray or numpy.ndarray
+        The linear and exponential fits evaluated at `x`.
+    return_type : bool, optional
+        If `True`, return the string `"lin"`/`"exp"` instead of the chosen
+        fit array. Default `False`.
+
+    Returns
+    -------
+    xr.DataArray or str
+        The selected fit, or its type label when `return_type=True`.
+    """
     xlin_orig = xlin.copy()
     xexp_orig = xexp.copy()
     if type(xlin) == xr.DataArray:
@@ -2644,6 +3236,7 @@ def calc_eps_thorpe_scale(t, lon, lat, S0=35.13):
     """
 
     def thorpe_scale_calcs(t, lon, lat, S):
+        """Run a single-profile Thorpe-scale overturn analysis via `mixsea`."""
         N2_method = "teos"
         eps_t, N2_t, diag = mx.overturn.nan_eps_overturn(
             t.depth.data,
@@ -2676,8 +3269,10 @@ def calc_eps_thorpe_scale(t, lon, lat, S0=35.13):
 
 
 def _ignore_hidden_files(files):
+    """Drop dot-files (e.g. macOS `._` resource forks) from a path list."""
     return [f for f in files if not f.name.startswith(".")]
 
 
 def _parse_path(path):
+    """Coerce a `str` to `pathlib.Path`, passing `Path` instances through."""
     return Path(path) if isinstance(path, str) else path
