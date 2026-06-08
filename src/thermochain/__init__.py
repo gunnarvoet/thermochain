@@ -144,7 +144,18 @@ $$
 
 with $\gamma$ the lower incomplete gamma function. The five parameters are $\Delta T_0$ (systematic bias), $m$ (asymptotic long-term drift rate), $A = a\tau$ (relaxation amplitude), $\tau$ (relaxation time), and $\beta$ (stretch exponent). The auto-selector (`lin_or_exp`) prefers the exponential over the linear fit when $R_\gamma^{2} > R_l^{2} + 0.3\,(1 - R_l^{2})$ — i.e. when the exponential explains a substantial fraction of the residual variance left by the linear fit.
 
-When `drift_parameters.iterate_subtract=True`, sensors flagged as large-drift outliers in pass 1 (based on `amplitude_threshold_mK`) have their pass-1 drift subtracted from `offsets` and the neighbour-stack stages re-run, so outlier drift does not contaminate neighbours' shared-component estimates. Pass-1 state is retained as `*_pass1` attributes on the class for diagnostic comparison.
+## Refinement: strongly-drifting sensors
+
+A few sensors in a deployment drift far more than the rest. Because the shared fluctuating component at a given depth is estimated from a sensor's demeaned neighbour triplet, an outlier's large excursions leak into its neighbours' shared-component estimates and bias the drift fit across the whole triplet. CvHG16 guard against this only at the background-profile stage (excluding such sensors from the depth fit); setting `drift_parameters.iterate_subtract=True` additionally removes their influence from the shared-fluctuation step.
+
+After the first full pass through the procedure above, sensors whose pass-1 drift amplitude exceeds `amplitude_threshold_mK` are flagged automatically; additional serials can be forced in with `manual_outlier_sns` (entries not in the deployment are skipped with a warning). The flagged sensors' pass-1 drift is subtracted from `offsets` and the neighbour-stack stages are re-run, so the shared fluctuating component is rebuilt from triplets no longer contaminated by the outliers' drift. Neighbours inherit this cleaned component directly — their fits are unchanged. (This outer flag–subtract–rerun loop is separate from the two-step shared-component refinement above; here "pass 1" and "pass 2" mean one full run of the procedure, before and after the outlier subtraction.)
+
+What happens to a *flagged* sensor's own drift is set by `iterate_mode`:
+
+- `"restore"` *(default)* — the flagged sensor's pass-1 drift is kept. Its pass-2 fit would be the fit of `offsets − pass-1 drift` (the residual leakage), which would zero out the L2 correction at the outlier; restoring pass-1 preserves the drift amplitude, at the cost of the self-bias that the iteration removes from its neighbours.
+- `"refit"` — the flagged sensor is re-fit against the *pass-2* (clean) shared component, recovering its drift free of the self-bias that inflated the pass-1 estimate. Prefer this when the residual bias at the outlier itself matters.
+
+Pass-1 state is retained as `*_pass1` attributes for comparison, and `thermochain.io.sensor_drift.plot_iteration_diagnostic` emits before/after figures at a given depth index.
 
 The output is a per-sensor drift trace `drift(sn, time)`; applying it (L2 = L1 − drift on the sensor's native time axis) is performed downstream of `thermochain`.
 
