@@ -58,6 +58,14 @@
 ### Internal Changes
 -   New `src/thermochain/pipeline.py` module holds the `Mooring` orchestration
     and pipeline-stage code, built on the existing `io.py` primitives.
+-   Dropped the `gvpy` dependency. The handful of helpers used (logger setup
+    and the plotting helpers `quickfig`, `axstyle`, `concise_date`,
+    `annotate_corner`, and a figure-saver) are now vendored locally: a new
+    `src/thermochain/_log.py` holds the loguru logger setup and `plot.py` holds
+    slimmed-down plotting helpers (`axstyle` is simplified to a minimal house
+    style). `loguru` is now a direct dependency. This removes the mandatory
+    `../gvpy` editable sibling checkout and prunes a large set of transitive
+    dependencies (cartopy, pyproj, shapely, dask, …).
 
 
 ## 2026.03.0

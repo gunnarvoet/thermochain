@@ -34,7 +34,7 @@ dependencies = [
     "mixsea",
     "sbemoored",
     "rbrmoored",
-    "gvpy",
+    "loguru",
     "odfpy>=1.4.1",
 ]
 
@@ -59,9 +59,10 @@ filterwarnings = [
     "error",
     # note the use of single quote below to denote "raw" strings in TOML
     'ignore:invalid escape sequence:DeprecationWarning',
-    # netCDF4 wheels ship with an older numpy ABI stamp — cosmetic,
-    # the module works at runtime. Triggered via gvpy.trilaterate
-    # importing netCDF4 at module load.
+    # netCDF4 wheels can ship with an older numpy ABI stamp — cosmetic,
+    # the module works at runtime. netCDF4 is imported transitively via
+    # rbrmoored / sbemoored / xarray. Harmless with current wheels but
+    # kept as a safety net for ABI-mismatched netCDF4/numpy combinations.
     'ignore:numpy\.ndarray size changed:RuntimeWarning',
     # the unchanged sensor_drift primitive uses xarray's GroupBy.apply in
     # remove_outliers; xarray emits a PendingDeprecationWarning we do not
@@ -79,7 +80,6 @@ package-type = "library"
 [tool.uv.sources]
 sbemoored = { path = "../sbemoored", editable = true }
 rbrmoored = { path = "../rbrmoored", editable = true }
-gvpy = { path = "../gvpy", editable = true }
 # mixsea = { path = "../mixsea", editable = true }
 mixsea = { git = "https://github.com/modscripps/mixsea", branch = "main" }
 

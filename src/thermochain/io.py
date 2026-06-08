@@ -39,10 +39,11 @@ import pandas as pd
 import rbrmoored
 import sbemoored
 import mixsea as mx
-import gvpy as gv
 
+from . import plot as tcplot
+from ._log import log
 
-logger = gv.misc.log()
+logger = log()
 
 
 def load_config(configfile):
@@ -716,8 +717,8 @@ def plot_zoom(ax, ts, rbr, ctd, add_legend=False):
     ctd.t1.sel(time=ts).plot(color="C0", linewidth=1, label="CTD 1", ax=ax)
     ctd.t2.sel(time=ts).plot(color="C4", linewidth=1, label="CTD 2", ax=ax)
     ax.set(xlabel="", ylabel="in-situ temperature [°C]")
-    gv.plot.concise_date(ax)
-    gv.plot.axstyle(ax, fontsize=9)
+    tcplot.concise_date(ax)
+    tcplot.axstyle(ax, fontsize=9)
     if add_legend:
         ax.legend()
 
@@ -756,7 +757,7 @@ def plot_multiple_cal_stop(ts, rbr, ctd, dt=2):
             np.datetime64(tsi.start) - np.timedelta64(dt, "m"),
             np.datetime64(tsi.stop) + np.timedelta64(dt, "m"),
         )
-        gv.plot.annotate_corner(ii, axi[0], background_circle="0.1", col="w")
+        tcplot.annotate_corner(ii, axi[0], background_circle="0.1", col="w")
         plot_zoom(axi[1], tsn, rbr, ctd)
         mctd = ctd.t1.sel(time=tsi).mean()
         axi[1].plot(
@@ -2830,7 +2831,7 @@ class sensor_drift:
         zi : int
             Depth-axis index of the sensor of interest.
         """
-        fig, ax = gv.plot.quickfig()
+        fig, ax = tcplot.quickfig()
         self.offsets.isel(depth=[zi - 1, zi, zi + 1]).plot(
             hue="depth", ax=ax, color="k", alpha=0.7
         )
@@ -2983,7 +2984,7 @@ class sensor_drift:
             savename = f"{self.mooring_name}_fit_{sn}"
             if suffix is not None:
                 savename += "_" + suffix
-            gv.plot.png(savename, figdir=figdir, verbose=False)
+            tcplot.save_png(savename, figdir)
         if int(getattr(self, "iteration_count", 0)) > 0:
             # Iteration only changes neighbours' fits (outliers are
             # restored to pass-1); emit the before/after diagnostic for
@@ -3006,7 +3007,7 @@ class sensor_drift:
                     )
                     if suffix is not None:
                         savename += "_" + suffix
-                    gv.plot.png(savename, figdir=figdir, verbose=False)
+                    tcplot.save_png(savename, figdir)
             plt.close()
 
 
