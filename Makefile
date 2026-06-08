@@ -42,5 +42,5 @@ ghdocs: ## generate documentation for GitHub Pages (CI-safe, no browser)
 	PDOC_ALLOW_EXEC=1 pdoc --math -t .pdoc-theme-gv -d numpy -o docs thermochain
 
 servedocs: ## compile the docs & watch for changes
-	pdoc --math -t .pdoc-theme-gv -d numpy thermochain
+	uv run pdoc --math -t .pdoc-theme-gv -d numpy thermochain
 	# $(BROWSER) http://localhost:8080
