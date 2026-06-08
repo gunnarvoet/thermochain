@@ -27,27 +27,19 @@ jobs:
         with:
           # `.pdoc-theme-gv` is a submodule needed by the build.
           submodules: 'true'
-      - uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          enable-cache: true
       - name: Install dependencies
-        # The local editable deps (gvpy, rbrmoored, sbemoored) and mixsea are
-        # not on PyPI, so `pip install .` cannot resolve them from the package
-        # metadata alone — pdoc must import thermochain, so they have to be
-        # present. Install them from their git repositories first, then the
-        # package (whose remaining deps come from PyPI) and pdoc itself.
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install \
-            "git+https://github.com/gunnarvoet/gvpy.git" \
-            "git+https://github.com/gunnarvoet/rbrmoored.git" \
-            "git+https://github.com/gunnarvoet/sbemoored.git" \
-            "git+https://github.com/modscripps/mixsea.git@main"
-          python -m pip install pdoc
-          python -m pip install .
+        # thermochain plus its git deps (rbrmoored, sbemoored, mixsea,
+        # pyrsktools) and the dev group (pdoc) all resolve from uv.lock in a
+        # single coherent resolution — no manual git-URL list to drift out of
+        # sync, and uv provisions a compatible Python automatically.
+        run: uv sync --frozen
       - name: Build docs
-        run: make ghdocs
+        # ghdocs invokes pdoc directly, so run it inside the uv-managed venv.
+        run: uv run make ghdocs
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
