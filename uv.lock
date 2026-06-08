@@ -869,7 +869,7 @@ wheels = [
 [[package]]
 name = "pyrsktools"
 version = "1.1.2"
-source = { editable = "../pyrsktools" }
+source = { git = "https://github.com/gunnarvoet/pyrsktools?branch=gunnar_main#2ee105ca932d47185fb8def20a12d60af362c346" }
 dependencies = [
     { name = "cmocean" },
     { name = "gsw" },
@@ -877,23 +877,6 @@ dependencies = [
     { name = "numpy" },
     { name = "scipy" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "black", marker = "extra == 'dev'" },
-    { name = "build", marker = "extra == 'dev'" },
-    { name = "cmocean" },
-    { name = "gsw" },
-    { name = "matplotlib" },
-    { name = "mypy", marker = "extra == 'dev'" },
-    { name = "numpy", specifier = ">=1.21.0" },
-    { name = "scipy" },
-    { name = "sphinx", marker = "extra == 'dev'" },
-    { name = "sphinx-paramlinks", marker = "extra == 'dev'" },
-    { name = "sphinx-toolbox", marker = "extra == 'dev'" },
-    { name = "twine", marker = "extra == 'dev'" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "pytest"
@@ -1008,27 +991,12 @@ wheels = [
 [[package]]
 name = "rbrmoored"
 version = "2026.3"
-source = { editable = "../rbrmoored" }
+source = { git = "https://github.com/gunnarvoet/rbrmoored?branch=main#5d78f5f1a45bb8b6d330834d7510562bf65dd53a" }
 dependencies = [
     { name = "netcdf4" },
     { name = "numpy" },
     { name = "pyrsktools" },
     { name = "xarray" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "netcdf4", specifier = ">=1.7.0" },
-    { name = "numpy", specifier = ">=2.0.0" },
-    { name = "pyrsktools", editable = "../pyrsktools" },
-    { name = "xarray" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pdoc", specifier = ">=16.0.0" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "ruff", specifier = ">=0.15.4" },
 ]
 
 [[package]]
@@ -1059,7 +1027,7 @@ wheels = [
 [[package]]
 name = "sbemoored"
 version = "2024.9"
-source = { editable = "../sbemoored" }
+source = { git = "https://github.com/gunnarvoet/sbemoored?branch=main#45e6aa45ddbff18db762a63946a416ffcf4f2be5" }
 dependencies = [
     { name = "gsw" },
     { name = "matplotlib" },
@@ -1069,24 +1037,6 @@ dependencies = [
     { name = "scipy" },
     { name = "xarray" },
     { name = "xmltodict" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "gsw" },
-    { name = "matplotlib", specifier = ">=3.10.8" },
-    { name = "netcdf4" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "scipy" },
-    { name = "xarray" },
-    { name = "xmltodict" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "ruff", specifier = ">=0.14.14" },
 ]
 
 [[package]]
@@ -1209,8 +1159,8 @@ requires-dist = [
     { name = "pandas" },
     { name = "python-box", specifier = ">=7.1.1" },
     { name = "pyyaml", specifier = ">=6.0.1" },
-    { name = "rbrmoored", editable = "../rbrmoored" },
-    { name = "sbemoored", editable = "../sbemoored" },
+    { name = "rbrmoored", git = "https://github.com/gunnarvoet/rbrmoored?branch=main" },
+    { name = "sbemoored", git = "https://github.com/gunnarvoet/sbemoored?branch=main" },
     { name = "tqdm" },
     { name = "xarray", specifier = ">=2023.12.0" },
 ]

@@ -78,8 +78,11 @@ module-name = ["thermochain"]
 package-type = "library"
 
 [tool.uv.sources]
-sbemoored = { path = "../sbemoored", editable = true }
-rbrmoored = { path = "../rbrmoored", editable = true }
+# Resolve from GitHub. For local editable development against sibling
+# checkouts, overlay them into the venv instead of editing this file:
+#   uv pip install -e ../rbrmoored -e ../sbemoored --no-deps
+sbemoored = { git = "https://github.com/gunnarvoet/sbemoored", branch = "main" }
+rbrmoored = { git = "https://github.com/gunnarvoet/rbrmoored", branch = "main" }
 # mixsea = { path = "../mixsea", editable = true }
 mixsea = { git = "https://github.com/modscripps/mixsea", branch = "main" }
 
