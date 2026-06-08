@@ -7,10 +7,13 @@ from pathlib import Path
 
 import numpy as np  # noqa: F401
 import pandas as pd
+import scipy.interpolate
 import xarray as xr
 
 from .io import (  # noqa: F401
+    EXP_PARAM_NAMES,
     ProcessThermistorMooring,
+    evaluate_drift_model,
     grid_thermistors,
     logger,
     rbr_ctd_cal_find_offset,
@@ -302,14 +305,21 @@ def drift_diag_bundle(sd, params, label):
 
 
 def correct_drift(sensor, sn, drift):
-    """Subtract a sensor's interpolated drift from its L1 series (L1 -> L2).
+    """Subtract a sensor's drift from its L1 series (L1 -> L2).
 
-    ``drift`` is the drift product already re-dimensioned to ``(sn, time)`` (window
-    centres on the ``time`` dim). The per-sensor drift is interpolated onto
-    the sensor's sample times and subtracted; ``fill_value="extrapolate"``
-    linearly extends the fit outside its window (e.g. the few hours at
-    deployment start before the first window centre) so the corrected
-    series has no NaN edge.
+    When ``drift`` carries the fit-parameter coords written by
+    ``sensor_drift.drift_to_dataarray`` (``fit_type``, ``lin_slope``,
+    ``lin_intercept``, and ``exp_t0``..``exp_tau`` for exponential fits), the
+    closed-form CvHG16 model is evaluated directly at the sensor's native
+    sample times: each sample time is mapped onto a fractional window index
+    (linearly extrapolated past the first/last window centre) and passed to
+    :func:`thermochain.io.evaluate_drift_model`. This is exact for linear
+    fits and avoids interpolating the daily-sampled trace for exponential
+    fits.
+
+    Products without those coords (older files) fall back to the legacy
+    ``interp_like`` path: the per-window drift is linearly interpolated onto
+    the sample times with ``fill_value="extrapolate"``.
 
     Parameters
     ----------
@@ -324,10 +334,35 @@ def correct_drift(sensor, sn, drift):
     Returns
     -------
     xr.DataArray
-        ``sensor`` minus the interpolated per-sensor drift (the L2 series).
+        ``sensor`` minus the per-sensor drift (the L2 series).
     """
     drifts = drift.sel(sn=sn)
-    driftsi = drifts.interp_like(sensor.time, kwargs=dict(fill_value="extrapolate"))
+    if "fit_type" not in drifts.coords:
+        driftsi = drifts.interp_like(
+            sensor.time, kwargs=dict(fill_value="extrapolate")
+        )
+        return sensor - driftsi
+
+    # Map native sample times -> fractional window index. The window-centre
+    # times vs. their integer indices is a near-linear relation; interp1d
+    # gives piecewise-linear interior + linear extrapolation at the edges.
+    win_times = drifts["time"].values.astype("datetime64[ns]").astype("float64")
+    win_idx = np.arange(drifts.sizes["time"], dtype=float)
+    sample_t = sensor["time"].values.astype("datetime64[ns]").astype("float64")
+    frac = scipy.interpolate.interp1d(
+        win_times, win_idx, kind="linear", fill_value="extrapolate",
+        assume_sorted=True,
+    )(sample_t)
+
+    fit_type = str(drifts["fit_type"].values)
+    lin_params = (float(drifts["lin_slope"]), float(drifts["lin_intercept"]))
+    exp_params = (
+        [float(drifts[f"exp_{p}"]) for p in EXP_PARAM_NAMES]
+        if "exp_t0" in drifts.coords
+        else None
+    )
+    di = evaluate_drift_model(frac, fit_type, lin_params, exp_params)
+    driftsi = xr.DataArray(di, dims="time", coords={"time": sensor["time"]})
     return sensor - driftsi
 
 

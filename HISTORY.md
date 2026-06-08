@@ -47,6 +47,12 @@
     drift parameter (default `None` = off) makes `select_triplet` skip
     neighbour triplets that span a vertical gap wider than the threshold, so
     drift fits don't bridge large holes in the sensor stack.
+-   `correct_drift` now evaluates the fitted CvHG16 drift model in closed form
+    at each sensor's native sample times (mapping times onto fractional window
+    indices) instead of interpolating the daily-sampled drift trace. The drift
+    product carries the per-sensor fit parameters (`fit_type`, `lin_slope`,
+    `lin_intercept`, `exp_t0`..`exp_tau`) as coordinates; older products
+    without them fall back to the previous `interp_like` path.
 
 ### Bug fixes
 -   `sensor_drift` / CvHG16: detrended offsets are now wired into the

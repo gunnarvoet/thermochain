@@ -2691,14 +2691,42 @@ class sensor_drift:
         self.fit_cleaned_offsets()
 
     def drift_to_dataarray(self):
-        """Note: the old version of this function lets you evaluate the fits to
-        the actual length of the time series. Bypassing this for now as we are
-        using the full time series for fitting but will need to bring this back
-        in.
+        """Assemble the per-sensor drift product as an `xarray.DataArray`.
+
+        The drift is the CvHG16 model evaluated at the window centres
+        (`self.time_window`), stored on a `window`/`time` axis. The
+        per-sensor fit parameters are attached as `sn`-indexed coordinates
+        so the apply step (`thermochain.pipeline.correct_drift`) can
+        evaluate the closed-form model at native sample times via
+        `evaluate_drift_model`:
+
+        - `fit_type` — `"lin"`/`"exp"` per sensor.
+        - `lin_slope`, `lin_intercept` — the linear fit, derived exactly
+          from the evaluated straight line (`drift_linfit`) over integer
+          window indices.
+        - `exp_t0`, `exp_m`, `exp_A`, `exp_beta`, `exp_tau` — the five
+          CvHG16 parameters, one coord each (only when an exponential fit
+          was computed, i.e. `fit_mode != "linear"`). Stored as separate
+          1-D coords because the drift DataArray has no `param` dimension.
         """
         out = self.drift_fit.copy()
         out.name = f"{self.mooring_name} sensor drift"
         out.coords["time"] = (["window"], np.array(self.time_window))
+
+        out.coords["fit_type"] = self.fit_type
+        # The linear fit is a straight line over integer window indices, so
+        # intercept = f(0) and slope = f(1) - f(0) recover it exactly without
+        # re-fitting. drop=True sheds the leftover scalar `window` coord.
+        lin0 = self.drift_linfit.isel(window=0, drop=True)
+        lin1 = self.drift_linfit.isel(window=1, drop=True)
+        out.coords["lin_intercept"] = lin0
+        out.coords["lin_slope"] = lin1 - lin0
+        if hasattr(self, "drift_exp_params"):
+            for pname in EXP_PARAM_NAMES:
+                out.coords[f"exp_{pname}"] = self.drift_exp_params.sel(
+                    param=pname, drop=True
+                )
+
         out.attrs["iteration_count"] = int(getattr(self, "iteration_count", 0))
         out.attrs["flagged_outlier_sns"] = np.asarray(
             getattr(self, "flagged_outlier_sns", []), dtype="int64"
@@ -3049,6 +3077,50 @@ def exp_function(t, t0, m, A, beta, tau):
     z = (np.asarray(t, dtype=float) / tau) ** beta
     lower_gamma = scipy.special.gamma(a) * scipy.special.gammainc(a, z)
     return t0 + m * t + A * lower_gamma / beta
+
+
+def evaluate_drift_model(frac_index, fit_type, lin_params, exp_params):
+    """Evaluate a fitted CvHG16 drift model at arbitrary window indices.
+
+    The drift fits are computed against integer *window* indices
+    (``np.arange(n_windows)``), so applying the drift at a sensor's native
+    sample times means evaluating the closed-form model at the (generally
+    fractional) window index each sample maps to.
+
+    Parameters
+    ----------
+    frac_index : array_like
+        Window-index coordinate(s) at which to evaluate the model. Integer
+        values ``0 .. n_windows-1`` are the window centres.
+    fit_type : str
+        ``"lin"`` or ``"exp"``.
+    lin_params : tuple of float or None
+        ``(slope, intercept)`` of the linear fit, in per-window-index
+        units. Required for ``fit_type == "lin"``.
+    exp_params : sequence of float or None
+        The five CvHG16 parameters ``(t0, m, A, beta, tau)`` in the order of
+        `EXP_PARAM_NAMES`. Required for ``fit_type == "exp"``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Drift evaluated at ``frac_index``. For ``"exp"`` the relaxation
+        (incomplete-gamma) term is held at zero for indices < 0, so the
+        pre-first-window extrapolation reduces to the finite linear part
+        ``t0 + m*idx`` and stays continuous at index 0 (where the gamma
+        term is zero anyway).
+    """
+    idx = np.asarray(frac_index, dtype=float)
+    if fit_type == "lin":
+        slope, intercept = lin_params
+        return intercept + slope * idx
+    if fit_type == "exp":
+        t0, m, A, beta, tau = (float(p) for p in exp_params)
+        a = 1.0 / beta
+        z = (np.clip(idx, 0.0, None) / tau) ** beta
+        lower_gamma = scipy.special.gamma(a) * scipy.special.gammainc(a, z)
+        return t0 + m * idx + A * lower_gamma / beta
+    raise ValueError(f"fit_type must be 'lin' or 'exp'; got {fit_type!r}")
 
 
 def calculate_r2(x, xfit):
