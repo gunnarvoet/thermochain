@@ -43,10 +43,9 @@ _OFFSET_CRUISE_RE = re.compile(r"(cruise\d+)")
 def load_cal_offsets(path):
     """Load a CTD cal-offsets NetCDF into one DataArray indexed by ``sn``.
 
-    Promoted from MOTIVE notebook 02's ``load_offsets``. The aggregated
-    offsets file (written by the CTD-cal notebook) carries a per-sensor
-    ``cast`` coord; it is propagated as ``source_cast`` and a
-    ``source_cruise`` coord is parsed from the filename so per-sensor
+    The aggregated offsets file (written by the CTD-calibration stage)
+    carries a per-sensor ``cast`` coord; it is propagated as ``source_cast``
+    and a ``source_cruise`` coord is parsed from the filename so per-sensor
     provenance survives into the L1 attrs. Returns ``None`` when ``path``
     is absent, so a missing post-deployment side does not raise.
 
@@ -82,9 +81,8 @@ def cal_diagnostic_attrs(
 ):
     """Build the flat L1 calibration-provenance attrs for one sensor.
 
-    Mirrors MOTIVE notebook 02's ``attach_diagnostic_offsets``: records
-    each side's offset / cruise / cast / cast-time when present in the
-    cal file (whether or not it was applied), and NaN + sentinels when
+    Records each side's offset / cruise / cast / cast-time when present in
+    the cal file (whether or not it was applied), and NaN + sentinels when
     the sensor is absent from that side. ``cal_method`` is recorded
     verbatim.
 
@@ -261,8 +259,7 @@ def drift_provenance_attrs(params, label):
 def drift_diag_bundle(sd, params, label):
     """Assemble the drift diagnostic Dataset from a fitted ``sensor_drift``.
 
-    Port of MOTIVE notebook 05a's ``_run_config`` bundle block: gathers the
-    arrays the drift-comparison diagnostics need (``offsets_clean``,
+    Gathers the arrays the drift-comparison diagnostics need (``offsets_clean``,
     ``drift_linfit``, ``drift_fit``, ``fit_type``, and — for auto/exp runs —
     ``drift_expfit`` / ``drift_exp_params``, plus the iterate-subtract
     ``*_pass1`` arrays when present), and writes the sd-derived diagnostic
@@ -307,8 +304,7 @@ def drift_diag_bundle(sd, params, label):
 def correct_drift(sensor, sn, drift):
     """Subtract a sensor's interpolated drift from its L1 series (L1 -> L2).
 
-    Promoted from MOTIVE notebook 06's notebook-local helper. ``drift`` is
-    the drift product already re-dimensioned to ``(sn, time)`` (window
+    ``drift`` is the drift product already re-dimensioned to ``(sn, time)`` (window
     centres on the ``time`` dim). The per-sensor drift is interpolated onto
     the sensor's sample times and subtracted; ``fill_value="extrapolate"``
     linearly extends the fit outside its window (e.g. the few hours at
@@ -349,8 +345,7 @@ def detect_cal_stops(
 ):
     """Propose CTD cal-stop windows from a cast's pressure trace.
 
-    Promoted from MOTIVE notebook 01b's ``find_cal_stops``. A cal stop is
-    a contiguous run where the rolling standard deviation of pressure
+    A cal stop is a contiguous run where the rolling standard deviation of pressure
     stays below ``p_std_thresh`` (dbar) within ``smooth_window``. Adjacent
     plateaus separated by less than ``bridge_gap`` are merged; plateaus
     shorter than ``min_duration`` are dropped. Pure and deterministic —
@@ -785,8 +780,7 @@ class Mooring(ProcessThermistorMooring):
 
         An optional per-source ignore list ``calibration.cal_ignore_sns_{source}``
         (e.g. ``cal_ignore_sns_pre``) excludes listed SNs even when a valid pool
-        file exists — parallel to the notebooks' ``pre_cal_ignore_sns`` /
-        ``post_cal_ignore_sns``. Pool files that are unreadable (e.g. no data
+        file exists. Pool files that are unreadable (e.g. no data
         variables), empty (zero-length time), or have no samples within the
         cast period are skipped with a warning rather than raising, so a
         degenerate or non-overlapping file does not abort the full source.
@@ -1058,7 +1052,7 @@ class Mooring(ProcessThermistorMooring):
         """Directory holding gridded-L1 chunks (``grid/l1/``; the drift-fit input).
 
         Both :meth:`grid_l1` (writer) and :meth:`fit_drift` (reader) resolve
-        here, matching the on-disk layout from notebook 03 / 05a.
+        here.
         """
         return self._grid_dir() / "l1"
 
@@ -1113,8 +1107,8 @@ class Mooring(ProcessThermistorMooring):
 
         .. note::
            Holding two fitted ``sensor_drift`` instances live at once can
-           segfault xarray's groupby C-state (documented in notebook 05a).
-           When sweeping labels, drop the returned object (``del``; ``gc``)
+           segfault xarray's groupby C-state. When sweeping labels, drop
+           the returned object (``del``; ``gc``)
            before the next ``fit_drift`` call.
 
         Parameters
@@ -1191,11 +1185,11 @@ class Mooring(ProcessThermistorMooring):
         da.to_netcdf(drift_path, mode="w")
 
     def _l2_filename(self, sn, sensor_type):
-        """Per-sensor L2 filename (project-prefixed, matching notebook 06).
+        """Per-sensor L2 filename (project-prefixed).
 
         ``{project}_{mooring}__{type}__{sn:06}_L2.nc`` (e.g.
-        ``motive_a__rbr__236109_L2.nc``). Differs from the per-sensor L1
-        name (no project prefix) — flagged for the reorg phase.
+        ``proj_a__rbr__236109_L2.nc``). Differs from the per-sensor L1
+        name, which has no project prefix.
         """
         return (
             f"{self.meta.project.lower()}_{self.meta.mooring_name.lower()}"
@@ -1212,8 +1206,8 @@ class Mooring(ProcessThermistorMooring):
         override with ``drift_label=``), re-dimensions it to ``(sn, time)``,
         and for each sensor interpolates the drift onto that sensor's L1
         sample times and subtracts (via :func:`correct_drift`). The L2
-        series carries the L1 attrs plus an ``sn`` attr (matching notebook
-        06). ``ignore_sns`` (config UNION sensor-sheet ``exclude==1``) is
+        series carries the L1 attrs plus an ``sn`` attr. ``ignore_sns``
+        (config UNION sensor-sheet ``exclude==1``) is
         applied on top of segment selection. Idempotent: existing L2 files
         are skipped unless ``overwrite=True``.
 
@@ -1303,9 +1297,9 @@ class Mooring(ProcessThermistorMooring):
     def grid_l1(self, segments=None, overwrite=False):
         """Grid per-sensor L1 to (depth, time) chunks, one set per segment.
 
-        Mirrors notebook 03: build the full deployment once via
-        ``grid_thermistors`` (peak RAM bounded by one (depth x time)
-        array), then slice and write fixed-length chunks. Idempotent —
+        Builds the full deployment once via ``grid_thermistors`` (peak RAM
+        bounded by one (depth x time) array), then slices and writes
+        fixed-length chunks. Idempotent —
         existing chunk files are skipped unless ``overwrite=True``.
         ``ignore_sns`` is applied via ``exclude_sn`` (structure vs.
         quality kept separate).

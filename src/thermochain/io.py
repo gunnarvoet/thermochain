@@ -251,7 +251,7 @@ def validate_thermistor_metadata(sensor_sheet, layouts, *, mooring_col="Mooring"
         Mapping `mooring_id` (e.g. `"A"`) to the output of
         `mooring_sheet_load`. The mooring_id must match the trailing
         character of `sensor_sheet[mooring_col]` (e.g. `"A"` matches
-        `"MOTIVE A"`).
+        `"MOORING A"`).
     mooring_col : str, optional
         Column in `sensor_sheet` carrying the mooring label. Default
         `"Mooring"`.
