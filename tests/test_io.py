@@ -4,6 +4,7 @@
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -245,6 +246,49 @@ class TestLoadConfigBoxWithVars:
         cfg = thermochain.io.load_config_box(config_file_path)
         assert cfg.path.root == config_file_path.parent.parent.resolve()
         assert cfg.path.data.proc == cfg.path.root / "data/proc/mavs3"
+
+
+class TestMooringTemplate:
+    """The shipped config template must stay in sync with the loader/pipeline.
+
+    Guards ``templates/mooring_template.yml`` against silent drift: if a config
+    key is renamed or its validation tightened (e.g. ``parse_gridding`` /
+    ``DriftParameters``), these tests fail until the template is updated.
+    """
+
+    @pytest.fixture
+    def template_path(self, rootdir):
+        return rootdir.parent / "templates" / "mooring_template.yml"
+
+    def test_template_exists(self, template_path):
+        assert template_path.exists()
+
+    def test_template_parses_and_has_required_keys(self, template_path, tmp_path):
+        # project_root=tmp_path so the loader's auto-mkdir lands in tmp, not the repo
+        cfg = thermochain.io.load_config_box(template_path, project_root=tmp_path)
+        # unconditionally-required keys
+        assert cfg.meta.mooring_name
+        assert cfg.meta.project
+        assert cfg.path.sensors and cfg.path.mooring
+        assert isinstance(cfg.start_time, np.datetime64)
+        assert isinstance(cfg.end_time, np.datetime64)
+        # documented optional blocks are present and well-formed
+        assert set(cfg.gridding) >= {"dt", "max_gap", "chunk"}
+        assert cfg.calibration.method in {
+            "linear_interp", "scalar", "scalar_pre_only", "none"
+        }
+        assert "deep" in cfg.segments
+
+    def test_template_validates_against_pipeline_schema(self, template_path, tmp_path):
+        # Exercise the same validators Mooring.__init__ / fit_drift run, so a
+        # schema change that the template misses is caught here.
+        cfg = thermochain.io.load_config_box(template_path, project_root=tmp_path)
+        defaults = dict(cfg.get("gridding", {}) or {})
+        for seg in cfg.segments.values():
+            thermochain.pipeline.parse_gridding(seg.get("gridding"), defaults=defaults)
+        params = dict(cfg.get("drift_parameters", {}) or {})
+        params.pop("label", None)  # pipeline-level key, not a DriftParameters field
+        thermochain.pipeline.DriftParameters.from_dict(params)
 
 
 class TestProcessThermistorMooringWithVars:

@@ -1,0 +1,104 @@
+# thermochain per-mooring processing configuration template.
+#
+# One config file per mooring drives the whole pipeline
+# (thermochain.pipeline.Mooring). Copy this file, rename it, and edit the
+# values for your mooring.
+#
+# Path resolution: relative paths resolve against this file's grandparent
+# directory (configfile.parent.parent), i.e. the project root. Two optional
+# prefixes are also recognised:
+#   $root/...  -> project root (same anchor as a bare relative path)
+#   $data/...  -> the data_root passed to load_config_box (e.g. an external drive)
+#
+# Not every key is needed for every run. Each block below notes the pipeline
+# stage(s) that read it ("needed for: ..."). The canonical stage order is:
+#   process_l0 -> compute_ctd_offsets -> cut_and_cal -> grid_l1
+#     -> fit_drift -> make_l2 -> grid_l2
+# A full parameter/stage table lives in the package documentation
+# (the `thermochain` module docstring, "Configuration" section).
+
+info: free-text description of this mooring / deployment   # optional; not read by the code
+
+
+# === always required =========================================================
+
+meta:
+  mooring_name: mavs3          # required; used in output filenames and paths
+  project: BLT                 # required; used (lowercased) in gridded-chunk filenames
+  PI: Gunnar Voet              # optional; informational only
+  email: gvoet@ucsd.edu        # optional; informational only
+
+# Deployment window. All products are cut to [start_time, end_time].
+start_time: 2021-10-22 20:30:00   # required; 'yyyy-mm-dd hh:mm:ss'
+end_time:   2022-08-04 13:45:00   # required
+
+path:
+  # --- always required ---
+  fig: fig/mavs3/                       # figure output directory (auto-created)
+  sensors: data/aux/sensor_sheet.xlsx   # sensor spreadsheet (.csv/.xlsx/.ods); see sensor_template.*
+  mooring: data/aux/mooring_sheet.csv   # mooring sheet; see mooring_template.csv
+  data:
+    proc: data/proc/mavs3/              # per-sensor L0/L1/L2 NetCDF root (l0/ l1/ l2/ derived)
+    raw:                                # raw logger files: a single path OR a per-instrument map
+      rbr: data/raw/rbrsolo/BLT2/
+      sbe: data/raw/sbe56/BLT2/
+    grid: data/grid/mavs3/              # needed for: grid_l1, grid_l2 (gridded chunk output)
+  # --- needed for: compute_ctd_offsets ---
+  ctd: data/cruises/                    # directory of CTD cal-cast NetCDF files
+  cal_stops: data/aux/cal_stops.csv     # cal-stop windows: source,cast,stop_start,stop_end,ctd_file[,ref_temp]
+  # --- needed for: fit_drift, make_l2 ---
+  aux: data/aux/                        # output directory for drift NetCDFs
+
+
+# === quality control (optional) ==============================================
+
+ignore_sns: []                 # SNs dropped from every stage (union with sensor-sheet exclude == 1)
+
+
+# === gridding (needed for: grid_l1, grid_l2) =================================
+# Top-level defaults; a per-segment `gridding:` block overrides individual keys.
+# All three keys must be defined (here or per segment). pandas duration strings.
+gridding:
+  dt: 2min        # output time step
+  max_gap: 10min  # native gaps wider than this are masked NaN, not interpolated across
+  chunk: 2D       # gridded output is written in chunks of this length
+
+
+# === CTD rosette calibration (needed for: compute_ctd_offsets, cut_and_cal) ==
+calibration:
+  method: linear_interp                 # linear_interp | scalar | scalar_pre_only | none
+  # offsets NetCDFs: OUTPUT of compute_ctd_offsets, INPUT to cut_and_cal
+  offsets_pre:  data/aux/cal_results/blt_cruise1_cal_offsets.nc
+  offsets_post: data/aux/cal_results/blt_cruise2_cal_offsets.nc
+  # per-sensor cal-cast pools (needed for: compute_ctd_offsets)
+  cal_casts_pre:  data/aux/pre_cal_cast_data/
+  cal_casts_post: data/aux/post_cal/l0/
+  cal_ignore_sns_pre:  []               # optional; SNs excluded from the pre-cruise offset fit
+  cal_ignore_sns_post: []               # optional; SNs excluded from the post-cruise offset fit
+
+
+# === segments (needed for: cut_and_cal, grid_l1, fit_drift, make_l2, grid_l2) =
+# Group sensors into vertically-coherent sections. With no segments defined,
+# the segment-aware stages have nothing to do.
+segments:
+  deep:
+    # select one of: {segment: <mooring-sheet 'segment' value>} | {sns: [..]} | {layout: file.csv}
+    select: { segment: deep }
+    drift: true                         # include this segment in the drift fit (default: false)
+    # optional per-segment overrides:
+    gridding: { dt: 30s }               # overrides matching top-level gridding keys
+    calibration: { method: scalar_pre_only }
+  shallow:
+    select: { segment: shallow }
+
+
+# === drift fit (needed for: fit_drift, make_l2; CvHG16 parameters) ===========
+# All keys optional; omitted keys take the DriftParameters defaults. Unknown
+# keys are rejected (typo guard). See the package docstring for the full
+# parameter reference.
+drift_parameters:
+  label: blt_main           # drift-product filename key (pipeline-level, not a CvHG16 field)
+  polydeg: 8                # background-fit polynomial degree
+  fit_mode: auto            # linear | auto | exp
+  iterate_subtract: false   # extra pass subtracting large-drift outliers before re-fitting neighbours
+  max_triplet_gap_m: null   # skip neighbour triplets spanning a vertical gap wider than this (m); null = off

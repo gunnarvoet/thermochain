@@ -39,6 +39,38 @@ Differential analyses on dense moored thermistor arrays demand **sub-millikelvin
 
 The clock and CTD stages provide absolute anchors; gridding produces the regular array CvHG16 needs; CvHG16 removes the slow drift that accumulates over months of deployment. The package implements the CvHG16 calibration procedure only — downstream scientific analyses of the calibrated product are out of scope.
 
+# Configuration
+
+The whole pipeline is driven by a single per-mooring YAML config consumed by
+`thermochain.pipeline.Mooring` (a subclass of
+`thermochain.io.ProcessThermistorMooring`). An annotated, fully-populated
+template lives at `templates/mooring_template.yml` — copy it, rename it, and
+edit the values for your mooring. Relative paths resolve against the config
+file's grandparent directory (the project root); the `$root/` and `$data/`
+prefixes anchor explicitly against the project root and an external
+`data_root`, respectively.
+
+Not every key is needed for every run — required-ness is *stage-dependent*. The
+table below maps each config block to the pipeline stage(s) that read it. The
+only **unconditionally** required keys are `meta.mooring_name`, `meta.project`,
+`path.{fig, sensors, mooring}`, `path.data.{raw, proc}`, and
+`start_time` / `end_time`; everything else is required only once you run the
+stage that consumes it.
+
+| Config block / key | Consumed by |
+| --- | --- |
+| `meta.{mooring_name, project}` · `path.{fig, sensors, mooring}` · `path.data.{raw, proc}` · `start_time` · `end_time` | **all stages** (always required) |
+| `path.ctd` · `path.cal_stops` · `calibration.cal_casts_{pre,post}` · `calibration.cal_ignore_sns_{pre,post}` | `compute_ctd_offsets` |
+| `calibration.{method, offsets_pre, offsets_post}` | `cut_and_cal` (offsets are the *output* of `compute_ctd_offsets`) |
+| `path.data.grid` · `gridding.{dt, max_gap, chunk}` | `grid_l1`, `grid_l2` |
+| `segments.<name>.{select, drift, gridding, calibration}` | `cut_and_cal`, `grid_l1`, `fit_drift`, `make_l2`, `grid_l2` |
+| `path.aux` · `drift_parameters.*` (incl. `label`) | `fit_drift`, `make_l2` |
+| `ignore_sns` | all segment-aware stages (quality drop, unioned with sensor-sheet `exclude == 1`) |
+
+Unknown keys in `gridding` and `drift_parameters` are rejected rather than
+silently ignored, so a typo fails fast. The default values for the CvHG16
+`drift_parameters` are the fields of `thermochain.pipeline.DriftParameters`.
+
 # Raw file conversion
 
 Initialize a processing object to process data from one mooring with `thermochain.io.ProcessThermistorMooring` using a `.yaml`-configuration file. The processing object will:
@@ -119,6 +151,7 @@ The output is a per-sensor drift trace `drift(sn, time)`; applying it (L2 = L1 �
 # Templates
 
 The `templates` directory holds templates for
+- Per-mooring processing config (`mooring_template.yml`) — the annotated YAML that drives the pipeline; see [Configuration](#configuration) for the parameter/stage table.
 - Sensor spreadsheet (holding all per-sensor info, e.g. clock calibration times, CTD calibration times, specific pre- and post-deployment notes.
 - Mooring configuration spreadsheet, laying out the configuration of the sensors on the moorings.
 
