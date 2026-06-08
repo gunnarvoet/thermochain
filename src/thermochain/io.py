@@ -2691,14 +2691,42 @@ class sensor_drift:
         self.fit_cleaned_offsets()
 
     def drift_to_dataarray(self):
-        """Note: the old version of this function lets you evaluate the fits to
-        the actual length of the time series. Bypassing this for now as we are
-        using the full time series for fitting but will need to bring this back
-        in.
+        """Assemble the per-sensor drift product as an `xarray.DataArray`.
+
+        The drift is the CvHG16 model evaluated at the window centres
+        (`self.time_window`), stored on a `window`/`time` axis. The
+        per-sensor fit parameters are attached as `sn`-indexed coordinates
+        so the apply step (`thermochain.pipeline.correct_drift`) can
+        evaluate the closed-form model at native sample times via
+        `evaluate_drift_model`:
+
+        - `fit_type` — `"lin"`/`"exp"` per sensor.
+        - `lin_slope`, `lin_intercept` — the linear fit, derived exactly
+          from the evaluated straight line (`drift_linfit`) over integer
+          window indices.
+        - `exp_t0`, `exp_m`, `exp_A`, `exp_beta`, `exp_tau` — the five
+          CvHG16 parameters, one coord each (only when an exponential fit
+          was computed, i.e. `fit_mode != "linear"`). Stored as separate
+          1-D coords because the drift DataArray has no `param` dimension.
         """
         out = self.drift_fit.copy()
         out.name = f"{self.mooring_name} sensor drift"
         out.coords["time"] = (["window"], np.array(self.time_window))
+
+        out.coords["fit_type"] = self.fit_type
+        # The linear fit is a straight line over integer window indices, so
+        # intercept = f(0) and slope = f(1) - f(0) recover it exactly without
+        # re-fitting. drop=True sheds the leftover scalar `window` coord.
+        lin0 = self.drift_linfit.isel(window=0, drop=True)
+        lin1 = self.drift_linfit.isel(window=1, drop=True)
+        out.coords["lin_intercept"] = lin0
+        out.coords["lin_slope"] = lin1 - lin0
+        if hasattr(self, "drift_exp_params"):
+            for pname in EXP_PARAM_NAMES:
+                out.coords[f"exp_{pname}"] = self.drift_exp_params.sel(
+                    param=pname, drop=True
+                )
+
         out.attrs["iteration_count"] = int(getattr(self, "iteration_count", 0))
         out.attrs["flagged_outlier_sns"] = np.asarray(
             getattr(self, "flagged_outlier_sns", []), dtype="int64"
