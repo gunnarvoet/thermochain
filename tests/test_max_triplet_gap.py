@@ -15,12 +15,6 @@ from thermochain.io import sensor_drift
 from thermochain.pipeline import DriftParameters, drift_provenance_attrs
 
 
-pytestmark = [
-    pytest.mark.filterwarnings("ignore::DeprecationWarning"),
-    pytest.mark.filterwarnings("ignore::PendingDeprecationWarning"),
-]
-
-
 @pytest.fixture(autouse=True)
 def _plain_tqdm(monkeypatch):
     monkeypatch.setattr(tqdm, "tqdm_notebook", tqdm.tqdm, raising=False)

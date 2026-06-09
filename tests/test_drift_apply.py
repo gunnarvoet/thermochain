@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 import xarray as xr
 
 from thermochain.io import (
@@ -8,16 +7,6 @@ from thermochain.io import (
     exp_function,
     sensor_drift,
 )
-
-# Building a real sensor_drift exercises find_outliers' known z.argmax()
-# DeprecationWarning (and xarray's GroupBy.apply PendingDeprecationWarning),
-# which the suite escalates to errors. Matches the suppression used by the
-# other drift test modules (e.g. test_iterate_subtract); the find_outliers
-# cleanup is tracked separately.
-pytestmark = [
-    pytest.mark.filterwarnings("ignore::DeprecationWarning"),
-    pytest.mark.filterwarnings("ignore::PendingDeprecationWarning"),
-]
 
 
 def _fit(synthetic_l1_dir):

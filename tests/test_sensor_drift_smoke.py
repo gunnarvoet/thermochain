@@ -11,16 +11,6 @@ import tqdm
 from thermochain.io import sensor_drift
 
 
-# Pre-existing deprecation noise from thermochain.io that refactor phase 1
-# will clean up: find_outliers' z.argmax() without dim= (DeprecationWarning),
-# and an xarray GroupBy.apply call (PendingDeprecationWarning). Ignore both
-# so the smoke test stays focused on pipeline wiring.
-pytestmark = [
-    pytest.mark.filterwarnings("ignore::DeprecationWarning"),
-    pytest.mark.filterwarnings("ignore::PendingDeprecationWarning"),
-]
-
-
 @pytest.fixture(autouse=True)
 def _plain_tqdm(monkeypatch):
     # thermochain.io hardcodes tqdm.tqdm_notebook, which needs ipywidgets.

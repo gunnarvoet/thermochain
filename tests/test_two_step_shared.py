@@ -18,12 +18,6 @@ from _synthetic import write_drift_l1_files
 from thermochain.io import sensor_drift
 
 
-pytestmark = [
-    pytest.mark.filterwarnings("ignore::DeprecationWarning"),
-    pytest.mark.filterwarnings("ignore::PendingDeprecationWarning"),
-]
-
-
 @pytest.fixture(autouse=True)
 def _plain_tqdm(monkeypatch):
     monkeypatch.setattr(tqdm, "tqdm_notebook", tqdm.tqdm, raising=False)
