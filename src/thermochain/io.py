@@ -381,7 +381,7 @@ def sensor_sheet_rename_columns(df):
     """
     try:
         df.drop(["Depth rating"], axis=1, inplace=True)
-    except:
+    except KeyError:
         pass
     df = df.rename(
         columns={
@@ -889,7 +889,6 @@ class ProcessThermistorMooring:
     def run_proc_single_rbr(self, sn, show_plot=False):
         """Process RBR sensors on the mooring."""
         type = "rbr"
-        info = self.proc_db.loc[sn]
         cals = self.get_clock_cals(sn)
         file = get_file_name(sn=sn, data_dir=self.cfg.path.data.raw, type=type)
         print(file.name)
@@ -906,7 +905,6 @@ class ProcessThermistorMooring:
     def run_proc_single_sbe(self, sn, show_plot=False):
         """Process SBE sensors on the mooring."""
         type = "sbe"
-        info = self.proc_db.loc[sn]
         cals = self.get_clock_cals(sn)
         insttime, utctime = self.get_clock_reads(sn)
         file = get_file_name(sn=sn, data_dir=self.cfg.path.data.raw, type=type)
@@ -953,8 +951,8 @@ class ProcessThermistorMooring:
         sn_not_processed_yet = self.proc_db.query("processed == False").index.values
         for sn in tqdm.tqdm(sn_not_processed_yet):
             try:
-                t = self.run_proc(sn)
-            except:
+                self.run_proc(sn)
+            except Exception:
                 print(f"{sn} failed")
         self.proc_db_update_files()
 
@@ -2079,7 +2077,7 @@ class sensor_drift:
         for key, value in drift_defaults.items():
             setattr(self, key, value)
         if drift_parameters is not None:
-            assert type(drift_parameters) == dict
+            assert isinstance(drift_parameters, dict)
             for key, value in drift_parameters.items():
                 setattr(self, key, value)
         if self.fit_mode not in ("linear", "auto", "exp"):
@@ -2784,7 +2782,6 @@ class sensor_drift:
         # Create 1x3 subplots per subfig.
         axtop = subfigs[0].subplots(nrows=1, ncols=5, sharey=True)
         axbot = subfigs[1].subplots(nrows=1, ncols=4, sharey=True)
-        axall = [axtop, axbot]
 
         offset_options = dict(
             vmin=-0.01, vmax=0.01, cmap="RdBu", y="depth", add_colorbar=False
@@ -3265,9 +3262,9 @@ def lin_or_exp(x, xlin, xexp, return_type=False):
     """
     xlin_orig = xlin.copy()
     xexp_orig = xexp.copy()
-    if type(xlin) == xr.DataArray:
+    if isinstance(xlin, xr.DataArray):
         xlin = xlin.data
-    if type(xexp) == xr.DataArray:
+    if isinstance(xexp, xr.DataArray):
         xexp = xexp.data
     good = ~np.isnan(x.data)
     xg = x.data[good]
@@ -3327,7 +3324,7 @@ def calc_eps_thorpe_scale(t, lon, lat, S0=35.13):
         ti = ti.squeeze()
         try:
             eps, Lt = thorpe_scale_calcs(ti, lon, lat, S0)
-        except:
+        except Exception:
             eps = np.zeros_like(ti.data) * np.nan
             Lt = np.ones_like(ti.data) * (-1)
         results.append((eps, Lt))
