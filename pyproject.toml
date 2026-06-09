@@ -64,10 +64,6 @@ filterwarnings = [
     # rbrmoored / sbemoored / xarray. Harmless with current wheels but
     # kept as a safety net for ABI-mismatched netCDF4/numpy combinations.
     'ignore:numpy\.ndarray size changed:RuntimeWarning',
-    # the unchanged sensor_drift primitive uses xarray's GroupBy.apply in
-    # remove_outliers; xarray emits a PendingDeprecationWarning we do not
-    # want escalated to an error inside fit_drift's real fit.
-    'ignore:GroupBy\.apply may be deprecated:PendingDeprecationWarning',
 ]
 
 [tool.uv.build-backend]

@@ -2239,7 +2239,7 @@ class sensor_drift:
         if last_window is not None:
             self.offsets = self.offsets.isel(window=range(last_window))
         self.n_offset_outliers = 0
-        self.offsets.groupby("depth").apply(self.remove_outliers_one_sensor)
+        self.offsets.groupby("depth").map(self.remove_outliers_one_sensor)
         print(
             f"Removed a total of {self.n_offset_outliers} outliers via 3*std criterion"
         )
@@ -2247,7 +2247,7 @@ class sensor_drift:
     def remove_outliers_one_sensor(self, tt):
         """Mask one sensor's offsets outside the median ±3σ band as NaN.
 
-        Applied per sensor via `groupby("depth").apply` from
+        Applied per sensor via `groupby("depth").map` from
         `remove_outliers`; increments `self.n_offset_outliers` by the
         number masked.
 
