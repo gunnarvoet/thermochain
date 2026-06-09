@@ -39,6 +39,28 @@ Differential analyses on dense moored thermistor arrays demand **sub-millikelvin
 
 The clock and CTD stages provide absolute anchors; gridding produces the regular array CvHG16 needs; CvHG16 removes the slow drift that accumulates over months of deployment. The package implements the CvHG16 calibration procedure only — downstream scientific analyses of the calibrated product are out of scope.
 
+# Running the pipeline
+
+The four calibration stages above are wired into a single config-driven pipeline
+by `thermochain.pipeline.Mooring`. One YAML config per mooring (see
+[Configuration](#configuration)) parameterises a fixed chain of idempotent
+stages that carry the raw files through the processing levels:
+
+```python
+from thermochain.pipeline import Mooring
+
+m = Mooring("path/to/mooring_config.yml")
+m.run()                 # run the full stage chain
+m.status_summary()      # report progress across L0/L1/drift/L2
+```
+
+Each stage skips outputs that already exist, so a partially complete deployment
+can be resumed by re-running `run`; pass `overwrite=True` to recompute, a
+`stages=` subset to run only part of the chain, or a `segments=` filter to
+restrict to named sub-spans of the mooring. The orchestration mechanics — the
+stage chain, stage selection, segment filtering, and status reporting — are
+documented in the `thermochain.pipeline` module docstring.
+
 # Configuration
 
 The whole pipeline is driven by a single per-mooring YAML config consumed by

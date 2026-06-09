@@ -1,5 +1,99 @@
 # src/thermochain/pipeline.py
-"""Config-driven Mooring pipeline orchestration over thermochain primitives."""
+r"""Config-driven orchestration of the thermochain processing pipeline.
+
+Where `thermochain.io` holds the individual processing *primitives* (raw → L0
+conversion, CTD calibration, gridding, the CvHG16 drift fit), this module wires
+them into a single, config-driven pipeline. The entry point is `Mooring`, a
+subclass of `thermochain.io.ProcessThermistorMooring` built from one per-mooring
+YAML config. Each primitive is exposed as an idempotent *stage* method, and
+`Mooring.run` chains them in a fixed order.
+
+The per-step *science* (what clock calibration, CTD calibration, gridding, and
+the CvHG16 drift method actually do) is documented in the package overview — see
+the `thermochain` module docstring. This page covers the *orchestration*: the
+stage chain, how stages are selected and filtered, idempotency, and how to drive
+a mooring from start to finish.
+
+# The stage chain
+
+`Mooring.run` executes the canonical chain in `STAGE_ORDER`, each stage
+consuming the previous stage's output:
+
+    process_l0 -> compute_ctd_offsets -> cut_and_cal
+      -> grid_l1 -> fit_drift -> make_l2 -> grid_l2
+
+- **`process_l0`** — convert each raw logger file to a clock-calibrated
+  per-sensor L0 NetCDF (alias of the inherited `run_proc_all`; see *Clock
+  calibration* in the overview).
+- **`compute_ctd_offsets`** — derive per-sensor pre-/post-deployment offsets
+  from the co-located CTD casts and write the aggregated offsets NetCDF (see
+  *CTD rosette calibration*).
+- **`cut_and_cal`** — cut each L0 record to the deployment window and apply the
+  (time-interpolated) CTD offset, writing per-sensor L1 NetCDF.
+- **`grid_l1`** — interpolate all L1 sensors onto the shared `(depth, time)`
+  grid, in `chunk`-length spans (see *Depth and time gridding*).
+- **`fit_drift`** — run the CvHG16 `sensor_drift` fit on the gridded, densely
+  instrumented segments and write the per-sensor drift trace (see *Sensor drift
+  calibration*).
+- **`make_l2`** — subtract each sensor's drift from its L1 record (closed-form
+  evaluation at native sample times) to yield the per-sensor L2 product.
+- **`grid_l2`** — interpolate the L2 sensors onto the same `(depth, time)` grid,
+  giving the final drift-corrected, gridded temperature product.
+
+# Orchestration semantics
+
+- **Fixed order.** Stages always run in `STAGE_ORDER`. The `stages=` argument to
+  `run` only *selects a subset* — it never reorders. Passing an unknown stage
+  name raises `ValueError`.
+- **Idempotent.** Every stage skips outputs that already exist, so re-running a
+  partially complete pipeline only does the missing work. `overwrite=True`
+  forces a stage to recompute and is forwarded to every selected stage.
+- **Segment filtering.** All stages except `process_l0` and
+  `compute_ctd_offsets` accept a `segments=` filter (a name, list of names, or
+  `None` for all). Segments are named sub-spans of the mooring defined in the
+  config; only those with `drift: true` are gridded and drift-corrected, and the
+  drift stages (`fit_drift` / `make_l2` / `grid_l2`) automatically no-op on
+  non-drift segments.
+
+# Driving a mooring
+
+    from thermochain.pipeline import Mooring
+
+    m = Mooring("path/to/mooring_config.yml")
+
+    m.run()                                  # full chain, all segments
+    m.run(stages=["cut_and_cal", "grid_l1"]) # just the L1 sub-chain
+    m.run(segments="deep")                   # one segment, full chain
+    m.run(overwrite=True)                    # force every stage to recompute
+
+`run` returns a `{stage_name: return_value}` dict for the stages it ran. Stages
+are also callable individually (e.g. `m.grid_l1(segments="deep")`) when
+debugging a single step.
+
+# Inspecting progress
+
+Two lazy status scanners report how far processing has got (both re-scan the
+output directories on each call, so they reflect work done outside the current
+session):
+
+- **`status`** — one row per sensor: L0 / L1 / L2 presence and the effective L1
+  `cal_method`.
+- **`status_summary`** — one row per segment: sensor count and present/expected
+  tallies for L1, gridded L1, drift labels, L2, and gridded L2.
+
+# Drift parameters
+
+The CvHG16 drift fit is parameterised by `DriftParameters`, a typed dataclass
+whose field names and defaults mirror the underlying
+`thermochain.io.sensor_drift`. It is populated from the config's
+`drift_parameters` block via `DriftParameters.from_dict`, which **rejects
+unknown keys** so a YAML typo fails fast rather than silently falling back to a
+default. The drift-product filename `label` is handled separately by
+`Mooring.fit_drift` and is not a `DriftParameters` field.
+
+The full config-block → stage mapping (which keys each stage requires) lives in
+the *Configuration* section of the `thermochain` package overview.
+"""
 
 import re
 from dataclasses import asdict, dataclass, field, fields
@@ -534,9 +628,12 @@ def resolve_segment_sns(mooring_info, select, root):
 class Mooring(ProcessThermistorMooring):
     """Config-driven moored-thermistor pipeline for one mooring.
 
-    Extends the L0 processing base with segment resolution and the
-    gridding stage. Built from a single YAML config (see the schema in
-    plans/generalize-thermistor-pipeline.md).
+    Extends `thermochain.io.ProcessThermistorMooring` (the L0 processing
+    base) with segment resolution, CTD calibration, gridding, and the
+    CvHG16 drift stages. Built from a single per-mooring YAML config; copy
+    and edit the annotated `templates/mooring_template.yml`. `run`
+    chains the stages — see the module docstring for the stage chain,
+    orchestration semantics, and a usage example.
     """
 
     def __init__(self, config_file, project_root=None, data_root=None):
