@@ -1,7 +1,8 @@
 """Tests for thermochain.io.find_outliers."""
 
+import warnings
+
 import numpy as np
-import pytest
 import xarray as xr
 
 from thermochain.io import find_outliers
@@ -41,12 +42,6 @@ class TestFindOutliers:
         # test_two_stage_criterion exists to avoid exactly this spillover.
         assert not bool(mask[7])
 
-    @pytest.mark.filterwarnings(
-        # find_outliers' second_fit branch calls z.argmax() without dim=,
-        # which triggers a DeprecationWarning on current xarray. Pre-
-        # existing bug in thermochain.io; not in scope for this test PR.
-        "ignore::DeprecationWarning",
-    )
     def test_two_stage_criterion(self):
         t = _synthetic_stratification()
         # Gross outlier caught by first stage, subtle one by second.
@@ -57,6 +52,14 @@ class TestFindOutliers:
         )
         assert not bool(mask[3])
         assert not bool(mask[25])
+
+    def test_second_fit_emits_no_deprecation_warning(self):
+        # The second_fit branch locates the bottom-most sensor. It must do
+        # so without xarray's argmin/argmax-without-dim DeprecationWarning.
+        t = _synthetic_stratification()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            find_outliers(t, exclusion_criteria=[0.1, 0.01], plot=False)
 
     def test_dropout_sensor_excluded(self):
         # Sensors with lots of NaNs (>0.1% of samples) are dropped.

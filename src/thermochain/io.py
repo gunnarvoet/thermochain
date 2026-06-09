@@ -1615,7 +1615,7 @@ def find_outliers(t, exclusion_criteria, polyfit_order=8, plot=True):
         # offset criterion here, say two times the offset? That way we still get
         # rid of the sensor if it is a gross outlier. We divide the offset for the
         # bottom-most sensor by two to account for this.
-        zmaxi = z.argmax().data
+        zmaxi = int(np.argmax(z.values))
         offset2[zmaxi] = offset2[zmaxi] / 1.5
         xn3 = np.absolute(offset2) < exclusion_criteria[1]
     else:
