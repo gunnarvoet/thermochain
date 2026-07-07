@@ -1,6 +1,6 @@
 # thermochain
 
-[![DOI](https://zenodo.org/badge/735142347.svg)](https://doi.org/10.5281/zenodo.21251092)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.21251092-blue)](https://doi.org/10.5281/zenodo.21251092)
 
 In-situ calibration and processing of high-density moored thermistor strings
 (RBR Solo, SBE 56).
