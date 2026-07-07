@@ -22,13 +22,8 @@ keywords:
   - thermistor
   - mooring
   - temperature
-# Once Zenodo mints a DOI for the archived release, record the concept DOI here
-# (resolves to the latest version) so it never goes stale:
-# doi: "10.5281/zenodo.XXXXXXX"
-# identifiers:
-#   - type: doi
-#     value: "10.5281/zenodo.XXXXXXX"
-#     description: "Concept DOI (all versions)"
+# Concept DOI (resolves to the latest version) so the citation never goes stale:
+doi: "10.5281/zenodo.21251092"
 #
 # When the companion paper is published, point software users to it as the
 # preferred citation:
