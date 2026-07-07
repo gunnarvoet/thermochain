@@ -9,7 +9,7 @@ authors:
     email: gvoet@ucsd.edu
     affiliation: "Scripps Institution of Oceanography, University of California San Diego"
     # orcid: "https://orcid.org/0000-0000-0000-0000"  # TODO: add ORCID
-version: "2026.03.0"
+version: "2026.07.0"
 # date-released: "2026-00-00"  # TODO: set to the release/tag date (YYYY-MM-DD)
 license: MIT
 repository-code: "https://github.com/gunnarvoet/thermochain"
