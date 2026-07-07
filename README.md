@@ -6,6 +6,7 @@ In-situ calibration and processing of high-density moored thermistor strings
 (RBR Solo, SBE 56).
 
 * Free software: MIT license
+* Documentation: [gunnarvoet.net/thermochain](https://gunnarvoet.net/thermochain)
 
 ## Overview
 
