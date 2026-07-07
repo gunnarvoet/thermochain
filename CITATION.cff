@@ -1,0 +1,51 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+title: thermochain
+abstract: "Processing toolbox for moored thermistor chains: clock and in-situ temperature calibration, gridding, and shared-fluctuation drift correction."
+type: software
+authors:
+  - given-names: Gunnar
+    family-names: Voet
+    email: gvoet@ucsd.edu
+    affiliation: "Scripps Institution of Oceanography, University of California San Diego"
+    # orcid: "https://orcid.org/0000-0000-0000-0000"  # TODO: add ORCID
+version: "2026.03.0"
+# date-released: "2026-00-00"  # TODO: set to the release/tag date (YYYY-MM-DD)
+license: MIT
+repository-code: "https://github.com/gunnarvoet/thermochain"
+url: "https://github.com/gunnarvoet/thermochain"
+keywords:
+  - oceanography
+  - physical-oceanography
+  - ocean-mixing
+  - turbulence
+  - thermistor
+  - mooring
+  - temperature
+# Once Zenodo mints a DOI for the archived release, record the concept DOI here
+# (resolves to the latest version) so it never goes stale:
+# doi: "10.5281/zenodo.XXXXXXX"
+# identifiers:
+#   - type: doi
+#     value: "10.5281/zenodo.XXXXXXX"
+#     description: "Concept DOI (all versions)"
+#
+# When the companion paper is published, point software users to it as the
+# preferred citation:
+# preferred-citation:
+#   type: article
+#   title: "High-Resolution Moored Temperature Measurements with Commercially Available Thermistors: Instrumentation, Calibration, and Drift Correction"
+#   authors:
+#     - given-names: Gunnar
+#       family-names: Voet
+#     - given-names: Spencer
+#       family-names: Kawamoto
+#     - given-names: Amy
+#       family-names: Waterhouse
+#       name-particle: F.
+#     - given-names: Caitlin
+#       family-names: Whalen
+#       name-particle: B.
+#   # journal: "..."
+#   # year: 2026
+#   # doi: "..."
