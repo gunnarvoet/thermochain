@@ -1,6 +1,6 @@
 # History
 
-## unreleased
+## 2026.07.0
 
 ### Breaking changes
 -   Package renamed `thermodrift` → `thermochain` as it grows from a
