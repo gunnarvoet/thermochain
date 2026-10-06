@@ -315,3 +315,54 @@ class TestProcessThermistorMooringWithVars:
         assert M.cfg.path.data.proc == proj / "data/proc/testmoor"
         assert M.cfg.path.data.procl0 == proj / "data/proc/testmoor/l0"
         assert M.cfg.path.sensors == proj / "data/sensor_sheet.xlsx"
+
+
+def _offset_white_noise(offset_s, n=20000, dt_s=2.0, seed=0):
+    """White noise sampled every dt_s, stamped offset_s off the target grid."""
+    import xarray as xr
+
+    rng = np.random.default_rng(seed)
+    t0 = np.datetime64("2025-01-01T00:00:00", "ns")
+    step = np.timedelta64(int(dt_s * 1e9), "ns")
+    src_time = t0 + np.timedelta64(int(offset_s * 1e9), "ns") + np.arange(n) * step
+    da = xr.DataArray(rng.standard_normal(n), dims="time", coords={"time": src_time})
+    grid = t0 + np.arange(1, n - 1) * step
+    grid = xr.DataArray(grid, dims="time", coords={"time": grid})
+    return da, grid
+
+
+def test_to_grid_linear_attenuates_offset_white_noise():
+    """Half-sample offset: linear interpolation halves white-noise variance."""
+    da, grid = _offset_white_noise(1.0)
+    out = thermochain.io._to_grid(da, grid, np.timedelta64(10, "s"), "linear")
+    assert out.var().item() == pytest.approx(0.5 * da.var().item(), rel=0.05)
+
+
+def test_to_grid_nearest_preserves_variance_and_values():
+    """Nearest-sample gridding moves samples to grid stamps without filtering."""
+    da, grid = _offset_white_noise(0.6)
+    out = thermochain.io._to_grid(da, grid, np.timedelta64(10, "s"), "nearest")
+    assert out.var().item() == pytest.approx(da.var().item(), rel=0.01)
+    # each grid value is an untouched source sample (the one 0.6 s later)
+    np.testing.assert_array_equal(out.values, da.values[1:-1])
+    assert out.time.equals(grid.time)
+
+
+def test_to_grid_nearest_leaves_gaps_empty():
+    """Grid points inside a source gap longer than max_gap stay NaN."""
+    da, grid = _offset_white_noise(0.6, n=200)
+    da = da.isel(time=np.r_[0:80, 120:200])  # 80 s hole in a 2 s record
+    out = thermochain.io._to_grid(da, grid, np.timedelta64(10, "s"), "nearest")
+    # tolerance is max_gap / 2 = 5 s from the nearest source sample
+    hole = (out.time > da.time[79] + np.timedelta64(5, "s")) & (
+        out.time < da.time[80] - np.timedelta64(5, "s")
+    )
+    assert hole.sum() > 20
+    assert out.where(hole, drop=True).isnull().all()
+    assert out.where(~hole, drop=True).notnull().all()
+
+
+def test_to_grid_rejects_unknown_method():
+    da, grid = _offset_white_noise(0.6, n=50)
+    with pytest.raises(ValueError, match="method"):
+        thermochain.io._to_grid(da, grid, np.timedelta64(10, "s"), "cubic")

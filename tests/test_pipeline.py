@@ -940,3 +940,18 @@ def test_run_rejects_unknown_stage(cal_mooring):
     m = Mooring(cal_mooring)
     with pytest.raises(ValueError, match="unknown stage"):
         m.run(stages=["frobnicate"])
+
+
+def test_parse_gridding_method_defaults_to_linear():
+    out = parse_gridding({"dt": "2s", "max_gap": "10s", "chunk": "2D"})
+    assert out["method"] == "linear"
+
+
+def test_parse_gridding_method_override_and_validation():
+    out = parse_gridding(
+        {"method": "nearest"}, defaults={"dt": "2s", "max_gap": "10s", "chunk": "2D"}
+    )
+    assert out["method"] == "nearest"
+    assert out["dt"] == np.timedelta64(2, "s")
+    with pytest.raises(ValueError, match="gridding method"):
+        parse_gridding({"dt": "2s", "max_gap": "10s", "chunk": "2D", "method": "cubic"})

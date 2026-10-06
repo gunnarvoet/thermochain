@@ -117,6 +117,7 @@ from .io import (  # noqa: F401
 )
 
 _GRIDDING_KEYS = {"dt", "max_gap", "chunk"}
+_GRIDDING_METHODS = {"linear", "nearest"}
 _CAL_METHODS = {"linear_interp", "scalar", "scalar_pre_only", "none"}
 
 # Canonical pipeline stage order — the single source of truth for Mooring.run().
@@ -557,25 +558,35 @@ def parse_gridding(block, defaults=None):
     Returns
     -------
     dict
-        All three required keys {dt, max_gap, chunk} as np.timedelta64.
+        All three required keys {dt, max_gap, chunk} as np.timedelta64, plus
+        ``method`` (``"linear"`` unless set; see
+        :func:`thermochain.io.grid_thermistors`).
 
     Raises
     ------
     ValueError
-        If ``block`` contains a key outside {dt, max_gap, chunk}.
+        If ``block`` contains a key outside {dt, max_gap, chunk, method}.
     ValueError
         If the merged result is missing any of the three required keys.
+    ValueError
+        If ``method`` is not ``"linear"`` or ``"nearest"``.
     """
     block = dict(block or {})
-    unknown = set(block) - _GRIDDING_KEYS
+    unknown = set(block) - _GRIDDING_KEYS - {"method"}
     if unknown:
         raise ValueError(f"unknown gridding keys: {sorted(unknown)}")
     merged = dict(defaults or {})
     merged.update(block)
+    method = merged.get("method", "linear")
+    if method not in _GRIDDING_METHODS:
+        raise ValueError(
+            f"gridding method must be one of {sorted(_GRIDDING_METHODS)}, got '{method}'"
+        )
     out = {k: pd.Timedelta(v).to_timedelta64() for k, v in merged.items() if k in _GRIDDING_KEYS}
     missing = _GRIDDING_KEYS - set(out)
     if missing:
         raise ValueError(f"gridding is missing required keys: {sorted(missing)}")
+    out["method"] = method
     return out
 
 
@@ -1474,6 +1485,7 @@ class Mooring(ProcessThermistorMooring):
                         dt=gp["dt"],
                         max_gap=gp["max_gap"],
                         exclude_sn=self._ignore_sns(),
+                        method=gp["method"],
                     )
                 full.sel(time=slice(ti, ti + gp["chunk"])).to_netcdf(fpath)
                 written += 1
@@ -1532,6 +1544,7 @@ class Mooring(ProcessThermistorMooring):
                         dt=gp["dt"],
                         max_gap=gp["max_gap"],
                         exclude_sn=self._ignore_sns(),
+                        method=gp["method"],
                     )
                 full.sel(time=slice(ti, ti + gp["chunk"])).to_netcdf(fpath)
                 written += 1

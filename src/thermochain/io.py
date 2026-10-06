@@ -1450,6 +1450,49 @@ def rbr_cut_and_cal_interp(
     return tmpcal, cal_method
 
 
+GRID_METHODS = ("linear", "nearest")
+
+
+def _to_grid(da, time, max_gap, method="linear"):
+    """Put one sensor's time series on the target time vector.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Time series with a monotonic `time` coordinate.
+    time : xr.DataArray
+        Target time vector.
+    max_gap : np.timedelta64
+        Source sample spacing above this is treated as a gap and left NaN.
+    method : {"linear", "nearest"}
+        ``"linear"`` interpolates between the two bracketing samples. This
+        low-pass filters the series with a gain that depends on where the
+        target falls between the samples: for a fractional offset ``a`` the
+        power gain is ``1 - 2a(1-a)(1 - cos(2*pi*f*dt))``, i.e. 1 at ``a = 0``
+        and 0 at Nyquist for ``a = 0.5``. With a drifting logger clock the
+        offset, and with it the high-frequency variance of the gridded
+        series, changes through a deployment.
+        ``"nearest"`` assigns each target the nearest source sample without
+        changing its value, which keeps the spectrum and costs up to half a
+        source sampling interval in timing. Use it when source and target
+        sampling intervals match and spectra or variances matter. Where the
+        target grid is finer than the source it repeats samples.
+
+    Returns
+    -------
+    xr.DataArray
+        Series on `time`.
+    """
+    if method == "linear":
+        return _insert_gap_nans(da, max_gap).interp_like(time)
+    if method == "nearest":
+        # A target more than max_gap / 2 from every source sample lies inside
+        # a gap longer than max_gap (or outside the record) and stays NaN.
+        out = da.reindex(time=time.values, method="nearest", tolerance=max_gap / 2)
+        return out.assign_coords(time=time.values)
+    raise ValueError(f"method must be one of {GRID_METHODS}, got '{method}'")
+
+
 def grid_thermistors(
     sensor_info,
     proc_dir,
@@ -1459,6 +1502,7 @@ def grid_thermistors(
     max_gap,
     exclude_sn=None,
     extra_meta_data=None,
+    method="linear",
 ):
     """Load all sensors once and grid them to a common time vector
     spanning `start`-`end`.
@@ -1484,6 +1528,11 @@ def grid_thermistors(
         SNs to skip entirely.
     extra_meta_data : dict, optional
         Extra attributes attached to the returned DataArray.
+    method : {"linear", "nearest"}, optional
+        How each sensor is put on the common time vector, see `_to_grid`.
+        Linear interpolation (default) filters high-frequency variance by an
+        amount that depends on the logger clock offset; nearest-sample
+        assignment does not. Recorded in the ``gridding_method`` attribute.
 
     Returns
     -------
@@ -1523,8 +1572,7 @@ def grid_thermistors(
         raw.close()
         if da.time.size == 0:
             continue
-        da = _insert_gap_nans(da, max_gap)
-        gridded = da.interp_like(time)
+        gridded = _to_grid(da, time, max_gap, method)
         data[i, :] = gridded.values
         if sensor_attrs is None:
             sensor_attrs = dict(gridded.attrs)
@@ -1543,6 +1591,7 @@ def grid_thermistors(
     t = t.sortby("depth")
 
     t.attrs = {k: v for k, v in t.attrs.items() if k in ["units", "long_name"]}
+    t.attrs["gridding_method"] = method
     t.time.attrs["long_name"] = " "
     if extra_meta_data is not None:
         for k, v in extra_meta_data.items():
