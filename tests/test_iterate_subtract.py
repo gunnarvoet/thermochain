@@ -315,10 +315,12 @@ class TestRestoreBackwardCompat:
     def test_restore_matches_pinned_baseline(self, synthetic_l1_dir_with_drift):
         # Legacy-path guard: restore-mode drift_fit on the single-pass
         # shared-component path (two_step_shared=False) must reproduce the
-        # baseline captured from the pre-iterate_mode implementation. This
-        # pins the legacy behaviour bit-for-bit now that two-step is the
-        # default; the two-step default path is covered by test_two_step_shared
-        # and the refit design tests.
+        # pinned baseline. This guards the legacy behaviour now that two-step
+        # is the default; the two-step default path is covered by
+        # test_two_step_shared and the refit design tests. The baseline was
+        # regenerated when the background polynomial fits moved to a
+        # normalized depth coordinate, which shifted drift_fit by up to
+        # 8e-7 K relative to the pre-iterate_mode implementation.
         l1_dir, drift_sn = synthetic_l1_dir_with_drift
         sd = _run_iter(l1_dir, drift_sn, "restore", two_step_shared=False)
         baseline = xr.open_dataarray(BASELINE)

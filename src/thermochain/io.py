@@ -1602,6 +1602,20 @@ def grid_thermistors(
     return t
 
 
+def _polyfit_profile(z, mt, mask, deg, w=None):
+    """Fit a polynomial to ``mt[mask]`` over ``z[mask]`` and evaluate at ``z``.
+
+    ``np.polynomial.Polynomial.fit`` maps the fitted depth range to [-1, 1]
+    before solving. Fitting a high-order polynomial on raw depths in meters
+    is badly conditioned (condition number ~1e13 for degree 8 over
+    1000-1200 m), which makes the result depend on the BLAS kernel.
+    """
+    z = np.asarray(z, dtype=float)
+    mask = np.asarray(mask, dtype=bool)
+    p = np.polynomial.Polynomial.fit(z[mask], np.asarray(mt)[mask], deg, w=w)
+    return p(z)
+
+
 def find_outliers(t, exclusion_criteria, polyfit_order=8, plot=True):
     """Find outliers in the time-mean stratification of a moored thermistor dataset.
 
@@ -1647,14 +1661,12 @@ def find_outliers(t, exclusion_criteria, polyfit_order=8, plot=True):
     exclude_nan = nanratio < 0.001
     xn = mt_good & exclude_nan
     # Do the first background fit and determine outliers.
-    pf = np.polynomial.polynomial.polyfit(z[xn], mt[xn], deg=polyfit_order)
-    py = np.polynomial.polynomial.polyval(z, pf)
+    py = _polyfit_profile(z, mt, xn, polyfit_order)
     offset = mt - py
     xn2 = np.absolute(offset) < exclusion_criteria[0]
     # If requested do the second background fit.
     if second_fit:
-        pf2 = np.polynomial.polynomial.polyfit(z[xn2], mt[xn2], deg=polyfit_order)
-        py2 = np.polynomial.polynomial.polyval(z, pf2)
+        py2 = _polyfit_profile(z, mt, xn2, polyfit_order)
         offset2 = mt - py2
         # The sensor closest to the bottom may deviate a bit from the others. We
         # don't want to exclude it as an outlier no matter what. Not ideal, but
@@ -1831,8 +1843,7 @@ def offsets_from_background_fit(
     spline_fit = spl(depth)
     spline_offsets = mt - spline_fit
 
-    pf2 = np.polynomial.polynomial.polyfit(depth[xn], mt[xn], deg=polydeg, w=w_sel)
-    poly_fit = np.polynomial.polynomial.polyval(depth, pf2)
+    poly_fit = _polyfit_profile(depth, mt, xn, polydeg, w=w_sel)
     poly_offsets = mt - poly_fit
 
     py = spline_fit if spline else poly_fit
