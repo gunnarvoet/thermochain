@@ -1,6 +1,6 @@
 # History
 
-## Unreleased
+## 2026.10.0
 
 ### New Features
 -   `grid_thermistors` and the `gridding` config block accept
@@ -38,6 +38,12 @@
     kept as a **deprecated alias** that re-exports `thermochain` and emits a
     `DeprecationWarning`; it will be removed in a future release. The GitHub
     repository was renamed accordingly (with redirects from the old name).
+-   Gridded chunk file names carry a time stamp without colons
+    (`..._L1_20241119T214500.nc`). Chunks from earlier processing with colons
+    in the stamp (`..._L1_20241119T21:45:00.nc`) are not recognized as
+    existing by `grid_l1` and `grid_l2`, and they match the same file pattern
+    in `fit_drift`. Delete them before regridding. (Note added with
+    2026.10.0.)
 
 ### New Features
 -   **Config-driven pipeline (`thermochain.pipeline`).** A major rewrite turns
