@@ -567,9 +567,13 @@ def test_make_l2_writes_per_sensor_l2_with_attrs(l2_mooring):
     sn0 = deep_sns[0]
     l1 = xr.open_dataarray(_only(procl1.glob(f"*__{sn0:06d}_L1.nc")))
     l2 = xr.open_dataarray(_only(procl2.glob(f"*__{sn0:06d}_L2.nc")))
-    # zero drift: L2 values equal L1; ignore the extra provenance coords
-    # (sn/depth/window) that correct_drift carries through from the drift product
+    # zero drift: L2 values equal L1; ignore the scalar provenance coords
     xr.testing.assert_allclose(l1, l2.reset_coords(drop=True), atol=1e-12)
+    # scalar coords from the mooring sheet, and nothing else next to time
+    assert set(l2.coords) == {"time", "sn", "depth", "sensor_type"}
+    assert int(l2.sn) == sn0
+    assert float(l2.depth) == float(m.mooring_info.loc[sn0]["depth"])
+    assert str(l2.sensor_type.values) == str(m.mooring_info.loc[sn0]["type"])
     assert l2.attrs["sn"] == sn0
     assert l2.attrs["SN"] == sn0             # L1 attrs carried over (copy)
     # nonzero-drift sensor: a correction was applied

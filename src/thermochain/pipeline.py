@@ -1382,7 +1382,9 @@ class Mooring(ProcessThermistorMooring):
         override with ``drift_label=``), re-dimensions it to ``(sn, time)``,
         and for each sensor interpolates the drift onto that sensor's L1
         sample times and subtracts (via :func:`correct_drift`). The L2
-        series carries the L1 attrs plus an ``sn`` attr. ``ignore_sns``
+        series carries the L1 attrs plus an ``sn`` attr, and the scalar
+        coords ``sn``, ``depth`` and ``sensor_type`` from the mooring
+        sheet. ``ignore_sns``
         (config UNION sensor-sheet ``exclude==1``) is
         applied on top of segment selection. Idempotent: existing L2 files
         are skipped unless ``overwrite=True``.
@@ -1445,6 +1447,14 @@ class Mooring(ProcessThermistorMooring):
                     continue
                 tmp = xr.open_dataarray(l1_files[0])
                 tc = correct_drift(tmp, sn, drift)
+                # Same scalar coords whichever path correct_drift took. The
+                # legacy path otherwise passes on coords of the drift
+                # product, including `window` interpolated to every sample.
+                tc = tc.reset_coords(drop=True).assign_coords(
+                    sn=sn,
+                    depth=float(self.mooring_info.loc[sn]["depth"]),
+                    sensor_type=sensor_type,
+                )
                 tc.attrs = tmp.attrs.copy()
                 tc.attrs["sn"] = sn
                 tc.to_netcdf(l2_path, mode="w")

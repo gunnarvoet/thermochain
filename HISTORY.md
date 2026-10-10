@@ -1,5 +1,15 @@
 # History
 
+## Unreleased
+
+### Bug fixes
+-   `make_l2` writes the scalar coordinates `sn`, `depth` and `sensor_type`
+    from the mooring sheet to every per-sensor L2 file. Since 2026.07.0 these
+    coordinates were present only when the drift product lacked the
+    fit-parameter coordinates. The `window` coordinate, which those files
+    carried interpolated to every sample, is no longer written. L2
+    temperatures are unchanged.
+
 ## 2026.10.0
 
 ### New Features
