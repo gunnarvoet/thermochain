@@ -1175,7 +1175,7 @@ class Mooring(ProcessThermistorMooring):
                     pre_applied=pre_applied, post_applied=post_applied,
                     t_pre=t_pre, t_post=t_post,
                 ))
-                da.to_netcdf(l1_path, mode="w")
+                self._write_product(da, l1_path, 1)
                 written += 1
                 methods[eff_method] = methods.get(eff_method, 0) + 1
             summary[seg] = {"written": written, "skipped": skipped, "methods": methods}
@@ -1457,13 +1457,49 @@ class Mooring(ProcessThermistorMooring):
                 )
                 tc.attrs = tmp.attrs.copy()
                 tc.attrs["sn"] = sn
-                tc.to_netcdf(l2_path, mode="w")
+                self._write_product(tc, l2_path, 2)
                 tc.close()
                 tmp.close()
                 written += 1
             drift.close()
             summary[seg] = {"written": written, "skipped": skipped}
         return summary
+
+    def _write_product(self, da, path, level, segment=None):
+        """Write one product file: variable ``t``, dataset-level identification.
+
+        The file stays a single-variable file, so ``xr.open_dataarray``
+        returns the DataArray with its attributes as before. The dataset
+        attributes ``project``, ``mooring``, ``level``, ``title`` and
+        ``Conventions`` (plus ``segment`` for gridded chunks) identify a
+        file opened in isolation.
+
+        Parameters
+        ----------
+        da : xr.DataArray
+            The product.
+        path : pathlib.Path
+            Output file, overwritten if present.
+        level : int
+            Processing level (1 or 2).
+        segment : str or None, optional
+            Segment name, for gridded chunks.
+        """
+        attrs = {
+            "project": str(self.meta.project),
+            "mooring": str(self.meta.mooring_name),
+            "level": f"L{level}",
+            "title": (
+                f"{self.meta.project} {self.meta.mooring_name} "
+                f"thermistor temperature, L{level}"
+            ),
+            "Conventions": "CF-1.8",
+        }
+        if segment is not None:
+            attrs["segment"] = segment
+        ds = da.to_dataset(name="t")
+        ds.attrs = attrs
+        ds.to_netcdf(path, mode="w")
 
     def _grid_dir(self):
         """Gridded-output directory as an absolute `Path`."""
@@ -1530,7 +1566,9 @@ class Mooring(ProcessThermistorMooring):
                         exclude_sn=self._ignore_sns(),
                         method=gp["method"],
                     )
-                full.sel(time=slice(ti, ti + gp["chunk"])).to_netcdf(fpath)
+                self._write_product(
+                    full.sel(time=slice(ti, ti + gp["chunk"])), fpath, 1, segment=seg
+                )
                 written += 1
             if full is not None:
                 del full
@@ -1589,7 +1627,9 @@ class Mooring(ProcessThermistorMooring):
                         exclude_sn=self._ignore_sns(),
                         method=gp["method"],
                     )
-                full.sel(time=slice(ti, ti + gp["chunk"])).to_netcdf(fpath)
+                self._write_product(
+                    full.sel(time=slice(ti, ti + gp["chunk"])), fpath, 2, segment=seg
+                )
                 written += 1
             if full is not None:
                 del full

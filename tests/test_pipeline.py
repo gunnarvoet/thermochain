@@ -979,3 +979,44 @@ def test_drift_parameters_coerce_numeric_strings():
 def test_drift_parameters_reject_non_numeric_string():
     with pytest.raises(ValueError, match="drift_parameters.spline_smooth"):
         DriftParameters.from_dict({"spline_smooth": "small"})
+
+
+def test_write_product_names_the_variable_and_stamps_the_dataset(tmp_path, l2_mooring):
+    m = Mooring(l2_mooring)
+    da = xr.DataArray(
+        np.arange(4.0),
+        dims="time",
+        coords={"time": np.arange(4).astype("datetime64[s]")},
+        attrs={"units": "°C", "SN": 1},
+    )
+    path = tmp_path / "x_L2.nc"
+    m._write_product(da, path, level=2)
+    with xr.open_dataset(path) as ds:
+        assert list(ds.data_vars) == ["t"]
+        assert ds.attrs["level"] == "L2"
+        assert ds.attrs["mooring"] == m.meta.mooring_name
+        assert ds.attrs["project"] == m.meta.project
+        assert ds.attrs["Conventions"] == "CF-1.8"
+        assert "segment" not in ds.attrs
+    with xr.open_dataarray(path) as back:
+        assert back.name == "t"
+        assert back.attrs == {"units": "°C", "SN": 1}
+        np.testing.assert_array_equal(back.values, da.values)
+
+
+def test_products_carry_the_variable_name_and_dataset_attrs(l2_mooring):
+    """L2 files and gridded L2 chunks written by the stages go through _write_product."""
+    m = Mooring(l2_mooring)
+    m.make_l2()
+    m.grid_l2()
+    l2 = sorted(m._procl2_dir().glob("*_L2.nc"))
+    chunks = sorted(m._gridl2_dir().glob("*_L2_*.nc"))
+    assert l2 and chunks
+    with xr.open_dataset(l2[0]) as ds:
+        assert list(ds.data_vars) == ["t"]
+        assert ds.attrs["level"] == "L2" and "segment" not in ds.attrs
+    with xr.open_dataset(chunks[0]) as ds:
+        assert list(ds.data_vars) == ["t"]
+        assert ds.attrs["level"] == "L2"
+        assert ds.attrs["segment"] in m.segments_cfg
+        assert "gridding_method" in ds["t"].attrs

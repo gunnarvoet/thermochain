@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### New Features
+-   The per-sensor L1 and L2 files and the gridded L1 and L2 chunks written by
+    `Mooring.cut_and_cal`, `make_l2`, `grid_l1` and `grid_l2` name their
+    variable `t` and carry the dataset attributes `project`, `mooring`,
+    `level`, `title` and `Conventions`, and gridded chunks also `segment`.
+    Before, the variable had xarray's placeholder name in most files and the
+    dataset attributes were empty. `xr.open_dataarray` reads the files as
+    before, with the variable attributes unchanged.
+
 ### Bug fixes
 -   `make_l2` writes the scalar coordinates `sn`, `depth` and `sensor_type`
     from the mooring sheet to every per-sensor L2 file. Since 2026.07.0 these
