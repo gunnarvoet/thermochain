@@ -237,6 +237,35 @@ _DRIFT_FIT_MODES = ("linear", "auto", "exp")
 _DRIFT_ITERATE_MODES = ("restore", "refit")
 
 
+_DRIFT_FLOAT_FIELDS = (
+    "exclude",
+    "spline_smooth",
+    "tau0",
+    "tau_bounds",
+    "beta_bounds",
+    "amplitude_threshold_mK",
+    "max_triplet_gap_m",
+)
+
+
+def _coerce_float_strings(name, value):
+    """Convert string entries of a numeric drift parameter to float.
+
+    Non-string values pass through unchanged, including the entries of a
+    list or tuple, whose container type is kept.
+    """
+    if isinstance(value, (list, tuple)):
+        return type(value)(_coerce_float_strings(name, v) for v in value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            raise ValueError(
+                f"drift_parameters.{name} must be numeric; got {value!r}"
+            ) from None
+    return value
+
+
 @dataclass
 class DriftParameters:
     """Typed, validated CvHG16 drift-fit parameters.
@@ -271,7 +300,11 @@ class DriftParameters:
     max_triplet_gap_m: object = None
 
     def __post_init__(self):
-        """Validate `fit_mode` and `iterate_mode` after dataclass init."""
+        """Coerce numeric strings, validate `fit_mode` and `iterate_mode`."""
+        # PyYAML reads an exponent without a decimal point (`5e-6`) as a
+        # string, which otherwise only fails deep inside the fit.
+        for name in _DRIFT_FLOAT_FIELDS:
+            setattr(self, name, _coerce_float_strings(name, getattr(self, name)))
         if self.fit_mode not in _DRIFT_FIT_MODES:
             raise ValueError(
                 f"fit_mode must be one of {_DRIFT_FIT_MODES}; got {self.fit_mode!r}"

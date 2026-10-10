@@ -955,3 +955,23 @@ def test_parse_gridding_method_override_and_validation():
     assert out["dt"] == np.timedelta64(2, "s")
     with pytest.raises(ValueError, match="gridding method"):
         parse_gridding({"dt": "2s", "max_gap": "10s", "chunk": "2D", "method": "cubic"})
+
+
+from thermochain.pipeline import DriftParameters  # noqa: E402
+
+
+def test_drift_parameters_coerce_numeric_strings():
+    # PyYAML loads `5e-6` (no decimal point) as a string.
+    import yaml
+
+    raw = yaml.safe_load("spline_smooth: 5e-6\nexclude: [1e-2, 5e-3]\ntau0: 20")
+    assert isinstance(raw["spline_smooth"], str)
+    p = DriftParameters.from_dict(raw)
+    assert p.spline_smooth == 5e-6 and isinstance(p.spline_smooth, float)
+    assert p.exclude == [1e-2, 5e-3]
+    assert p.tau0 == 20 and isinstance(p.tau0, int)  # non-strings untouched
+
+
+def test_drift_parameters_reject_non_numeric_string():
+    with pytest.raises(ValueError, match="drift_parameters.spline_smooth"):
+        DriftParameters.from_dict({"spline_smooth": "small"})
