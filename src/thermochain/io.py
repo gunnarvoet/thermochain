@@ -1608,10 +1608,17 @@ def _polyfit_profile(z, mt, mask, deg, w=None):
     ``np.polynomial.Polynomial.fit`` maps the fitted depth range to [-1, 1]
     before solving. Fitting a high-order polynomial on raw depths in meters
     is badly conditioned (condition number ~1e13 for degree 8 over
-    1000-1200 m), which makes the result depend on the BLAS kernel.
+    1000-1200 m), which makes the result depend on the BLAS kernel. For a
+    200 m chain near 4100 m the raw-depth solve drops to rank 7 of 9, so the
+    fit also depends on the depth of the chain.
     """
     z = np.asarray(z, dtype=float)
     mask = np.asarray(mask, dtype=bool)
+    if not mask.any():
+        raise ValueError(
+            f"no sensors left for the degree-{deg} background fit: all are "
+            "NaN in the time mean or rejected by the exclusion criteria"
+        )
     p = np.polynomial.Polynomial.fit(z[mask], np.asarray(mt)[mask], deg, w=w)
     return p(z)
 
@@ -1795,7 +1802,7 @@ def offsets_from_background_fit(
     weights : array-like, optional
         Per-sensor weights (length = ``t.depth.size``) forwarded to both the
         spline (``UnivariateSpline(w=...)``) and the polynomial
-        (``np.polynomial.polynomial.polyfit(w=...)``) fits. Smaller weight
+        (``np.polynomial.Polynomial.fit(w=...)``) fits. Smaller weight
         means the fit is allowed to deviate more from that sensor. Useful
         for damping endpoint pull when the topmost / bottom-most sensors
         sit off the interior trend.
@@ -1869,11 +1876,13 @@ def offsets_from_background_fit(
             )
         # Vertical derivative of the fits
         ax = axall[1][0]
-        poly_fit.differentiate(coord="depth").plot(
+        poly_fit_da = xr.DataArray(
+            poly_fit, coords=[t.depth.data], dims=["depth"]
+        )
+        poly_fit_da.differentiate(coord="depth").plot(
             ax=ax, y="depth", color="C0", alpha=0.5, label="polynomial"
         )
-        spline_fit_da = poly_fit.copy()
-        spline_fit_da.data = spline_fit
+        spline_fit_da = poly_fit_da.copy(data=spline_fit)
         spline_fit_da.differentiate(coord="depth").plot(
             ax=ax, y="depth", color="C3", alpha=0.5, label="spline"
         )
