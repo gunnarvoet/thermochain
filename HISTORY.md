@@ -1,5 +1,34 @@
 # History
 
+## Unreleased
+
+### New Features
+-   `grid_thermistors` and the `gridding` config block accept
+    `method: nearest`, which assigns each grid time the nearest source sample
+    without changing its value. The default stays `linear`. The method is
+    recorded in the `gridding_method` attribute.
+
+### Bug fixes
+-   Background polynomial fits (`find_outliers`,
+    `offsets_from_background_fit`) now map the depth range to [-1, 1] before
+    solving. A degree-8 fit on raw depths in meters loses rank for a short
+    chain at large depth: for a synthetic 46-sensor, 200 m chain the
+    least-squares solve keeps 9 of 9 singular values with the chain top at 0 m
+    and at 1000 m, and 7 of 9 at 4100 m, where the offsets differ by up to
+    0.33 mK from the same chain at 0 m. With the normalized depth the offsets
+    agree to 2e-11 mK. **Results change for deep arrays.** On a 46-sensor
+    chain at 4129 to 4311 m the outlier-exclusion step rejects 285 offsets
+    where it rejected 303 before, and the drift product changes by 0.016 mK
+    rms (0.153 mK maximum). Reprocess such arrays with this version.
+-   `offsets_from_background_fit` and `correct_offset` no longer fail with
+    `plot=True`, their default.
+-   A background fit with no sensors left (all NaN in the time mean, or all
+    rejected by the exclusion criteria) raises a `ValueError` that says so.
+-   `DriftParameters` converts numeric strings to float. PyYAML reads an
+    exponent without a decimal point (`spline_smooth: 5e-6`) as a string,
+    which made `Mooring.fit_drift` fail inside the spline fit. A string that
+    is not a number is rejected with the name of the parameter.
+
 ## 2026.07.0
 
 ### Breaking changes
