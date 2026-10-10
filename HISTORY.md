@@ -1,6 +1,14 @@
 # History
 
-## Unreleased
+## 2026.10.1
+
+### Breaking changes
+-   `uv.lock` pins `rbrmoored` 2026.10, which subtracts the periodic RBRsolo³
+    spike from the spike samples by default. Earlier versions replaced those
+    samples by linear interpolation. `Mooring.run_proc_single_rbr` calls
+    `rbrmoored.solo.proc` with its defaults, so L0 files written from now on
+    have the spike subtracted. L0 files from earlier processing should be
+    regenerated.
 
 ### New Features
 -   The per-sensor L1 and L2 files and the gridded L1 and L2 chunks written by
@@ -18,6 +26,7 @@
     fit-parameter coordinates. The `window` coordinate, which those files
     carried interpolated to every sample, is no longer written. L2
     temperatures are unchanged.
+
 
 ## 2026.10.0
 

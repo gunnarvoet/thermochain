@@ -1004,12 +1004,14 @@ wheels = [
 
 [[package]]
 name = "rbrmoored"
-version = "2026.3"
-source = { git = "https://github.com/gunnarvoet/rbrmoored?branch=main#5d78f5f1a45bb8b6d330834d7510562bf65dd53a" }
+version = "2026.10"
+source = { git = "https://github.com/gunnarvoet/rbrmoored?branch=main#919a2745afadeef31c6bb1c54e3b660937542c96" }
 dependencies = [
+    { name = "matplotlib" },
     { name = "netcdf4" },
     { name = "numpy" },
     { name = "pyrsktools" },
+    { name = "scipy" },
     { name = "xarray" },
 ]
 
@@ -1135,7 +1137,7 @@ wheels = [
 
 [[package]]
 name = "thermochain"
-version = "2026.10.0"
+version = "2026.10.1"
 source = { editable = "." }
 dependencies = [
     { name = "gsw" },
