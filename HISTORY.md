@@ -14,7 +14,7 @@
 
 ### Bug fixes
 -   `plot_multiple_cal_stop` raised a `TypeError` for a single stop. It now
-    returns a 2-D axes array for any number of stops.
+    returns a 2-D axes array for one or more stops.
 
 
 ## 2026.10.1

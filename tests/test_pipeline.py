@@ -1141,6 +1141,54 @@ def test_propose_cal_stops_checks_source_before_opening_the_cast(ctd_cal_mooring
         m.propose_cal_stops("mid", 1, "no_such_cast.nc", plot=False)
 
 
+def test_propose_cal_stops_plots_candidate_without_thermistor_samples(ctd_cal_mooring):
+    """Pool files that end before the stop: figures still render, no refinement."""
+    m = Mooring(ctd_cal_mooring)
+    pool = m._cal_cast_pool_dir("pre")
+    for sn in (301111, 301222):
+        f = next(pool.glob(f"*{sn:06d}*.nc"))
+        with xr.open_dataarray(f) as da:
+            short = da.sel(time=slice(None, np.datetime64("2024-11-08T00:05:00"))).load()
+        short.to_netcdf(f)
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc")
+    assert len(cand) == 1
+    assert cand.loc[1, "trim_s"] == 0.0
+    plt.close("all")
+
+
+def test_save_cal_stops_rejects_missing_or_reversed_times(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    csv = Path(m.cfg.path.root) / m.cfg.path.cal_stops
+    before = csv.read_text()
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    reversed_ = cand.copy()
+    reversed_.loc[1, "stop_end"] = reversed_.loc[1, "stop_start"] - pd.Timedelta("10s")
+    with pytest.raises(ValueError, match="stop_end"):
+        m.save_cal_stops(reversed_)
+    missing = cand.copy()
+    missing.loc[1, "stop_end"] = pd.NaT
+    with pytest.raises(ValueError, match="stop_end"):
+        m.save_cal_stops(missing)
+    assert csv.read_text() == before
+
+
+def test_save_cal_stops_rejects_unknown_source(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    cand["source"] = "Pre"
+    with pytest.raises(ValueError, match="source"):
+        m.save_cal_stops(cand)
+
+
+def test_save_cal_stops_rejects_same_cast_given_as_int_and_str(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    two = pd.concat([cand, cand]).astype({"cast": object})
+    two.iloc[1, two.columns.get_loc("cast")] = "1"
+    with pytest.raises(ValueError, match="one stop"):
+        m.save_cal_stops(two)
+
+
 def test_save_cal_stops_missing_column_leaves_file_untouched(ctd_cal_mooring):
     """Review Focus 5."""
     m = Mooring(ctd_cal_mooring)

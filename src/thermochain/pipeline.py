@@ -1096,7 +1096,8 @@ class Mooring(ProcessThermistorMooring):
         to the cast, and draws two figures for review: the pressure record
         with the candidates shaded (`thermochain.io.plot_cal_stop_candidates`)
         and thermistor and CTD temperature at each candidate
-        (`thermochain.io.plot_multiple_cal_stop`).
+        (`thermochain.io.plot_multiple_cal_stop`). The second figure is drawn
+        only when the cast has thermistor data in the pool.
 
         The candidates are a starting point. Pick one per cast, adjust
         ``stop_start`` / ``stop_end`` in the returned table where the figures
@@ -1204,21 +1205,30 @@ class Mooring(ProcessThermistorMooring):
         missing = [col for col in _CAL_STOPS_REQUIRED_COLS if col not in stops.columns]
         if missing:
             raise ValueError(f"stops missing required column(s): {missing}")
-        if stops.duplicated(["source", "cast"]).any():
-            raise ValueError(
-                "save_cal_stops takes one stop per (source, cast); select a single candidate"
-            )
         new = []
         for _, r in stops.iterrows():
+            source, cast = str(r["source"]), int(r["cast"])
+            if source not in _CAL_ASSIGN_COL:
+                raise ValueError(f"source {source!r} not supported; expected 'pre' or 'post'")
+            start, end = pd.Timestamp(r["stop_start"]), pd.Timestamp(r["stop_end"])
+            if pd.isna(start) or pd.isna(end) or end <= start:
+                raise ValueError(
+                    f"{source} cast {cast}: stop_end must be later than stop_start "
+                    f"(got {start} .. {end})"
+                )
             new.append({
-                "source": str(r["source"]),
-                "cast": int(r["cast"]),
-                "stop_start": pd.Timestamp(r["stop_start"]).isoformat(),
-                "stop_end": pd.Timestamp(r["stop_end"]).isoformat(),
+                "source": source,
+                "cast": cast,
+                "stop_start": start.isoformat(),
+                "stop_end": end.isoformat(),
                 "ctd_file": str(r["ctd_file"]),
                 "ref_temp": r["ref_temp"] if "ref_temp" in stops.columns else np.nan,
             })
         keys = {(r["source"], r["cast"]) for r in new}
+        if len(keys) < len(new):
+            raise ValueError(
+                "save_cal_stops takes one stop per (source, cast); select a single candidate"
+            )
         cols = list(_CAL_STOPS_CSV_COLS)
         old = []
         if path.exists():

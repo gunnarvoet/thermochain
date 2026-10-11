@@ -713,7 +713,8 @@ def plot_zoom(ax, ts, rbr, ctd, add_legend=False):
         Whether to draw a legend. Default `False`.
     """
     t = rbr.sel(time=ts)
-    t.plot(hue="n", add_legend=False, linewidth=0.75, color="k", alpha=0.3, ax=ax)
+    if t.sizes["time"] >= 2:        # thermistor records may not cover the window
+        t.plot(hue="n", add_legend=False, linewidth=0.75, color="k", alpha=0.3, ax=ax)
     ctd.t1.sel(time=ts).plot(color="C0", linewidth=1, label="CTD 1", ax=ax)
     ctd.t2.sel(time=ts).plot(color="C4", linewidth=1, label="CTD 2", ax=ax)
     ax.set(xlabel="", ylabel="in-situ temperature [°C]")
