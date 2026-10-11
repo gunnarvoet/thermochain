@@ -108,9 +108,11 @@ m.save_cal_stops(cand.loc[[2]])                      # one stop per cast
 ```
 
 Candidates are periods of steady CTD pressure (`detect_cal_stops`) whose start is moved forward
-until the difference between CTD and thermistors has settled (`refine_cal_stop`). The detection
-thresholds were set on deep-ocean casts from one cruise. Check every candidate in the
-temperature figure, in particular stops in strong stratification or with ship heave.
+until the difference between CTD and thermistors has settled (`refine_cal_stop`). Check every
+candidate in the temperature figure. A stop whose pressure fluctuates more than the default
+threshold of 0.5 dbar is split into pieces or missed. In that case loosen the detection, for
+example with `detect_kwargs={"bridge_gap": "40s", "p_std_thresh": 1.0}`, or type the window into
+the table by hand.
 
 ## Configuration
 
