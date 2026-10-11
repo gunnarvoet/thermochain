@@ -945,6 +945,17 @@ def test_compute_ctd_offsets_missing_cal_stops_path_raises(ctd_cal_mooring):
         m.compute_ctd_offsets()
 
 
+def test_cal_cast_stack_selects_assigned_sensors(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    with xr.open_dataset(m._ctd_dir() / "cruise1/cruise1_cast_001.nc") as ctd:
+        c = m._cal_cast_stack("pre", 1, ctd)
+        assert c.dims == ("n", "time")
+        assert c.sn.values.tolist() == [301111, 301222]
+        assert m._cal_cast_stack("pre", 99, ctd) is None      # nobody assigned
+        with pytest.raises(ValueError, match="source"):
+            m._cal_cast_stack("mid", 1, ctd)
+
+
 from thermochain.pipeline import STAGE_ORDER  # noqa: E402
 from thermochain.io import ProcessThermistorMooring  # noqa: E402
 

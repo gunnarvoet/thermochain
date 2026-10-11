@@ -496,6 +496,7 @@ def correct_drift(sensor, sn, drift):
 
 _CAL_STOP_COLUMNS = ["stop_start", "stop_end", "mean_p", "mean_t", "duration_s"]
 _CAL_STOPS_REQUIRED_COLS = ["source", "cast", "stop_start", "stop_end", "ctd_file"]
+_CAL_ASSIGN_COL = {"pre": "pre_ctd_cal_cast", "post": "post_ctd_cal_cast"}
 
 
 def detect_cal_stops(
@@ -1009,6 +1010,72 @@ class Mooring(ProcessThermistorMooring):
             p = Path(self.cfg.path.root) / p
         return p
 
+    def _cal_cast_stack(self, source, cast_no, ctd):
+        """Stack the cal-cast series of all sensors assigned to one cast.
+
+        Sensor selection is ``(assignment == cast_no)`` minus
+        ``calibration.cal_ignore_sns_{source}``, intersected with pool-file
+        presence, in sensor-sheet order. Unreadable, empty, and
+        non-overlapping pool files are skipped with a warning. Every series
+        is interpolated onto the time base of the first sensor.
+
+        Returns
+        -------
+        xr.DataArray or None
+            Dims ``(n, time)`` with an ``sn`` coord on ``n``, or ``None`` when
+            no assigned sensor has usable data.
+        """
+        if source not in _CAL_ASSIGN_COL:
+            raise ValueError(f"source {source!r} not supported; expected 'pre' or 'post'")
+        pool = self._cal_cast_pool_dir(source)
+        cal = self.cfg.get("calibration", {}) or {}
+        ignore = set(int(s) for s in (cal.get(f"cal_ignore_sns_{source}", []) or []))
+        cast_period = slice(ctd.time.values[0], ctd.time.values[-1])
+
+        assign = pd.to_numeric(self.sensor_info[_CAL_ASSIGN_COL[source]], errors="coerce")
+        assigned = [int(sn) for sn in self.sensor_info.index[assign == cast_no]]
+        assigned = [sn for sn in assigned if sn not in ignore]
+        cals, kept = [], []
+        for sn in assigned:
+            files = list(pool.glob(f"*{sn:06d}*.nc"))
+            if not files:
+                continue                      # absent from pool -> cal-ignored
+            if len(files) > 1:
+                raise OSError(
+                    f"ambiguous pool files for SN{sn:06d} in {pool}: {[f.name for f in files]}"
+                )
+            try:
+                da = xr.open_dataarray(files[0])
+            except ValueError as exc:
+                logger.warning(
+                    f"{source} SN{sn:06d}: unreadable pool file {files[0].name} ({exc}); skipping"
+                )
+                continue
+            if da.sizes.get("time", 0) == 0:
+                da.close()
+                logger.warning(
+                    f"{source} SN{sn:06d}: empty pool file {files[0].name}; skipping"
+                )
+                continue
+            sliced = da.sel(time=cast_period)
+            if sliced.sizes.get("time", 0) == 0:
+                da.close()
+                logger.warning(
+                    f"{source} SN{sn:06d}: pool file {files[0].name} has no samples in cast period; skipping"
+                )
+                continue
+            cals.append(sliced)
+            kept.append(sn)
+        if not cals:
+            return None
+
+        time = cals[0].time.copy()
+        c = xr.concat([ci.interp_like(time) for ci in cals], dim="n")
+        for ci in cals:
+            ci.close()
+        c["sn"] = (("n"), kept)
+        return c
+
     def compute_ctd_offsets(self, sources=None, overwrite=False):
         """Compute per-sensor CTD-cal offsets and write the offsets NetCDF(s).
 
@@ -1059,10 +1126,9 @@ class Mooring(ProcessThermistorMooring):
         elif isinstance(sources, str):
             sources = [sources]
 
-        assign_col = {"pre": "pre_ctd_cal_cast", "post": "post_ctd_cal_cast"}
         summary = {}
         for source in sources:
-            if source not in assign_col:
+            if source not in _CAL_ASSIGN_COL:
                 raise ValueError(f"source {source!r} not supported; expected 'pre' or 'post'")
             out_path = self._offsets_out_path(source)
             if out_path.exists() and not overwrite:
@@ -1070,63 +1136,18 @@ class Mooring(ProcessThermistorMooring):
                 summary[source] = {"written": 0, "skipped": 1, "path": str(out_path)}
                 continue
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            pool = self._cal_cast_pool_dir(source)
-            col = assign_col[source]
+            self._cal_cast_pool_dir(source)     # fail early on a missing cal_casts_{source}
             rows = cal_stops[cal_stops["source"] == source]
-
-            cal = self.cfg.get("calibration", {}) or {}
-            ignore = set(int(s) for s in (cal.get(f"cal_ignore_sns_{source}", []) or []))
 
             parts = []
             for _, r in rows.iterrows():
                 cast_no = int(r["cast"])
                 ctd = xr.open_dataset(self._ctd_dir() / str(r["ctd_file"]))
-                cast_period = slice(ctd.time.values[0], ctd.time.values[-1])
-
-                assign = pd.to_numeric(self.sensor_info[col], errors="coerce")
-                assigned = [int(sn) for sn in self.sensor_info.index[assign == cast_no]]
-                assigned = [sn for sn in assigned if sn not in ignore]
-                cals, kept = [], []
-                for sn in assigned:
-                    files = list(pool.glob(f"*{sn:06d}*.nc"))
-                    if not files:
-                        continue                      # absent from pool -> cal-ignored
-                    if len(files) > 1:
-                        raise OSError(
-                            f"ambiguous pool files for SN{sn:06d} in {pool}: {[f.name for f in files]}"
-                        )
-                    try:
-                        da = xr.open_dataarray(files[0])
-                    except ValueError as exc:
-                        logger.warning(
-                            f"{source} SN{sn:06d}: unreadable pool file {files[0].name} ({exc}); skipping"
-                        )
-                        continue
-                    if da.sizes.get("time", 0) == 0:
-                        da.close()
-                        logger.warning(
-                            f"{source} SN{sn:06d}: empty pool file {files[0].name}; skipping"
-                        )
-                        continue
-                    sliced = da.sel(time=cast_period)
-                    if sliced.sizes.get("time", 0) == 0:
-                        da.close()
-                        logger.warning(
-                            f"{source} SN{sn:06d}: pool file {files[0].name} has no samples in cast period; skipping"
-                        )
-                        continue
-                    cals.append(sliced)
-                    kept.append(sn)
-                if not cals:
+                c = self._cal_cast_stack(source, cast_no, ctd)
+                if c is None:
                     logger.warning(f"{source} cast {cast_no}: no sensors in pool, skipping")
                     ctd.close()
                     continue
-
-                time = cals[0].time.copy()
-                c = xr.concat([ci.interp_like(time) for ci in cals], dim="n")
-                for ci in cals:
-                    ci.close()
-                c["sn"] = (("n"), kept)
                 ts = slice(np.datetime64(r["stop_start"]), np.datetime64(r["stop_end"]))
                 res = rbr_ctd_cal_find_offset(ts, c, ctd)
 
