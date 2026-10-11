@@ -8,7 +8,9 @@
     stop to the table that `compute_ctd_offsets` reads. `refine_cal_stop`
     moves the start of a stop forward until the difference between CTD and
     thermistors has settled, and `thermochain.io.plot_cal_stop_candidates`
-    draws the candidates on the cast's pressure record.
+    draws the candidates on the cast's pressure record. `propose_cal_stops`
+    bridges gaps of up to 40 s between pressure plateaus. The default of
+    `detect_cal_stops` stays at 20 s.
 
 ### Bug fixes
 -   `plot_multiple_cal_stop` raised a `TypeError` for a single stop. It now

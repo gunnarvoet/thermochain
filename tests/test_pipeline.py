@@ -1068,6 +1068,25 @@ def test_propose_cal_stops_rejects_unknown_source(ctd_cal_mooring):
         m.propose_cal_stops("mid", 1, "cruise1/cruise1_cast_001.nc", plot=False)
 
 
+def test_propose_cal_stops_bridges_gaps_up_to_40s(ctd_cal_mooring):
+    """A 5 s pressure excursion mid-stop (34 s above the std threshold) does not split it."""
+    m = Mooring(ctd_cal_mooring)
+    with xr.open_dataset(m._ctd_dir() / "cruise1/cruise1_cast_001.nc") as ds:
+        ctd = ds.load()
+    bump = (ctd.time >= np.datetime64("2024-11-08T00:10:00")) & (
+        ctd.time < np.datetime64("2024-11-08T00:10:05")
+    )
+    ctd["p"] = ctd.p + 5.0 * bump
+    ctd.to_netcdf(m._ctd_dir() / "cruise1/heave.nc")
+
+    cand = m.propose_cal_stops("pre", 1, "cruise1/heave.nc", plot=False)
+    assert len(cand) == 1
+    split = m.propose_cal_stops(
+        "pre", 1, "cruise1/heave.nc", plot=False, detect_kwargs={"bridge_gap": "20s"}
+    )
+    assert len(split) == 2
+
+
 def test_save_cal_stops_accepts_hand_edited_string_times(ctd_cal_mooring):
     """Review Focus 4."""
     m = Mooring(ctd_cal_mooring)

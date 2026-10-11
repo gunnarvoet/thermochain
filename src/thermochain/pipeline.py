@@ -1120,7 +1120,10 @@ class Mooring(ProcessThermistorMooring):
             Draw the review figures. Default ``True``.
         detect_kwargs, refine_kwargs : dict, optional
             Keyword overrides for :func:`detect_cal_stops` and
-            :func:`refine_cal_stop`.
+            :func:`refine_cal_stop`. Detection here bridges gaps of up to
+            ``bridge_gap="40s"`` between plateaus, twice the default of
+            :func:`detect_cal_stops`, so that a short pressure excursion does
+            not split a stop.
 
         Returns
         -------
@@ -1141,7 +1144,7 @@ class Mooring(ProcessThermistorMooring):
                 logger.warning(
                     f"{source} cast {cast}: no sensors in pool, candidates are pressure-only"
                 )
-            detected = detect_cal_stops(ctd, **(detect_kwargs or {}))
+            detected = detect_cal_stops(ctd, **{"bridge_gap": "40s", **(detect_kwargs or {})})
             rows, windows = [], []
             for r in detected.itertuples():
                 sl = slice(np.datetime64(r.stop_start), np.datetime64(r.stop_end))

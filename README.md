@@ -111,8 +111,9 @@ Candidates are periods of steady CTD pressure (`detect_cal_stops`) whose start i
 until the difference between CTD and thermistors has settled (`refine_cal_stop`). Check every
 candidate in the temperature figure. A stop whose pressure fluctuates more than the default
 threshold of 0.5 dbar is split into pieces or missed. In that case loosen the detection, for
-example with `detect_kwargs={"bridge_gap": "40s", "p_std_thresh": 1.0}`, or type the window into
-the table by hand.
+example with `detect_kwargs={"p_std_thresh": 0.75}`, or type the window into the table by hand.
+A looser threshold lets a candidate run into the time when the rosette leaves the stop, so check
+the end of the window as well.
 
 ## Configuration
 
