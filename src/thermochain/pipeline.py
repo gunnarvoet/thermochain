@@ -578,6 +578,83 @@ def detect_cal_stops(
     return pd.DataFrame(rows, columns=_CAL_STOP_COLUMNS)
 
 
+def refine_cal_stop(
+    stop,
+    c,
+    ctd,
+    *,
+    window="30s",
+    tolerance=1.5,
+    min_remaining="60s",
+):
+    """Trim the start of a cal stop until the thermistors have settled.
+
+    Pressure-based detection (:func:`detect_cal_stops`) marks any time the
+    rosette is steady, but the thermistors are still equilibrating at the
+    start of a stop. This computes the trailing rolling standard deviation of
+    ``ctd.t1 - sensor`` over ``window`` for every sensor, takes the median
+    across sensors, and moves the stop start to the first sample where that
+    median is at or below ``tolerance`` times its settled value. The settled
+    value is the median over the second half of the stop. The stop end is
+    never changed.
+
+    The rolling window is evaluated on the stop segment only, so the refined
+    start is at least one ``window`` (minus one sample) after the original
+    start, also for a stop that was settled from its first sample.
+
+    Parameters
+    ----------
+    stop : slice
+        Pressure-based stop with ``np.datetime64`` bounds.
+    c : xr.DataArray
+        Thermistor stack for the cast, dims ``(n, time)``.
+    ctd : xr.Dataset
+        Cast dataset with a time-indexed ``t1`` (degC).
+    window : str, optional
+        Pandas offset for the rolling-std window. Default ``"30s"``.
+    tolerance : float, optional
+        Multiple of the settled value that counts as settled. Default 1.5.
+    min_remaining : str, optional
+        Pandas offset. The original stop is returned if trimming would leave
+        less than this. Default ``"60s"``.
+
+    Returns
+    -------
+    slice
+        The stop with its start moved forward, or the original ``stop`` when
+        the segment is too short, has no finite statistics, or would shrink
+        below ``min_remaining``.
+    """
+    seg = c.sel(time=stop)
+    if seg.sizes["time"] < 4:
+        return stop
+    times = pd.to_datetime(seg.time.values)
+    dt_s = (times[1] - times[0]).total_seconds()
+    nwin = max(2, int(pd.Timedelta(window).total_seconds() / dt_s))
+    diff = ctd.t1.interp_like(seg) - seg
+    med_rstd = diff.rolling(time=nwin, center=False).std().median(dim="n").values
+    finite_idx = np.flatnonzero(np.isfinite(med_rstd))
+    if finite_idx.size < 2:
+        return stop
+    half = max(1, finite_idx.size // 2)
+    settled = float(np.nanmedian(med_rstd[finite_idx[-half:]]))
+    if not np.isfinite(settled):
+        return stop
+    threshold = tolerance * settled
+    candidate = np.flatnonzero(np.isfinite(med_rstd) & (med_rstd <= threshold))
+    if candidate.size == 0:
+        return stop
+    new_start = np.datetime64(times[candidate[0]])
+    orig_start = np.datetime64(stop.start)
+    orig_stop = np.datetime64(stop.stop)
+    if new_start <= orig_start:
+        return stop
+    min_rem = np.timedelta64(int(pd.Timedelta(min_remaining).total_seconds()), "s")
+    if (orig_stop - new_start) < min_rem:
+        return stop
+    return slice(new_start, orig_stop)
+
+
 def parse_gridding(block, defaults=None):
     """Validate a gridding block and convert dt/max_gap/chunk to np.timedelta64.
 

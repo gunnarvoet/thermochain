@@ -739,6 +739,70 @@ def test_detect_cal_stops_empty_when_never_stationary():
     assert len(detect_cal_stops(ctd)) == 0
 
 
+from thermochain.pipeline import refine_cal_stop  # noqa: E402
+
+
+def _synthetic_stack(ctd, stop_start, amp=0.05, tau=20.0, sigma=1e-3, nsens=3, seed=0):
+    """Thermistor stack (n, time) at 2 s: CTD t1 minus an offset, plus an
+    exponential equilibration transient starting at ``stop_start`` and noise."""
+    rng = np.random.default_rng(seed)
+    times = ctd.time.values[::2]
+    ctd_t = ctd.t1.sel(time=times).values
+    secs = (times - np.datetime64(stop_start)) / np.timedelta64(1, "s")
+    transient = np.where(secs >= 0, amp * np.exp(-np.clip(secs, 0, None) / tau), 0.0)
+    data = np.stack([
+        ctd_t - 0.003 * (i + 1) + transient + sigma * rng.standard_normal(times.size)
+        for i in range(nsens)
+    ])
+    c = xr.DataArray(data, dims=("n", "time"), coords={"time": times})
+    c["sn"] = (("n"), [301111 + i for i in range(nsens)])
+    return c
+
+
+def _first_stop(ctd):
+    r = detect_cal_stops(ctd).iloc[0]
+    return slice(np.datetime64(r["stop_start"]), np.datetime64(r["stop_end"]))
+
+
+def _trim_s(orig, refined):
+    return (refined.start - orig.start) / np.timedelta64(1, "s")
+
+
+def test_refine_cal_stop_trims_equilibration_transient():
+    ctd = _synthetic_cast()
+    stop = _first_stop(ctd)
+    c = _synthetic_stack(ctd, stop.start)          # 50 mK transient, tau 20 s
+    refined = refine_cal_stop(stop, c, ctd)
+    assert refined.stop == stop.stop               # end untouched
+    assert 40.0 < _trim_s(stop, refined) < 150.0   # scratch run: 80 s
+
+
+def test_refine_cal_stop_settled_stop_loses_one_window():
+    ctd = _synthetic_cast()
+    stop = _first_stop(ctd)
+    c = _synthetic_stack(ctd, stop.start, amp=0.0, sigma=0.0)
+    refined = refine_cal_stop(stop, c, ctd)
+    # 30 s window at 2 s sampling = 15 samples; first finite rolling std is 28 s in
+    assert _trim_s(stop, refined) == 28.0
+    assert refined.stop == stop.stop
+
+
+def test_refine_cal_stop_respects_min_remaining():
+    ctd = _synthetic_cast()
+    stop = _first_stop(ctd)
+    c = _synthetic_stack(ctd, stop.start)
+    short = slice(stop.start, stop.start + np.timedelta64(70, "s"))
+    assert refine_cal_stop(short, c, ctd) == short
+
+
+def test_refine_cal_stop_returns_input_for_tiny_segment():
+    ctd = _synthetic_cast()
+    stop = _first_stop(ctd)
+    c = _synthetic_stack(ctd, stop.start)
+    tiny = slice(stop.start, stop.start + np.timedelta64(4, "s"))   # 3 samples
+    assert refine_cal_stop(tiny, c, ctd) == tiny
+
+
 from thermochain.io import rbr_ctd_cal_find_offset  # noqa: E402
 
 
