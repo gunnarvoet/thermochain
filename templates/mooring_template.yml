@@ -45,7 +45,7 @@ path:
     grid: data/grid/mavs3/              # needed for: grid_l1, grid_l2 (gridded chunk output)
   # --- needed for: compute_ctd_offsets ---
   ctd: data/cruises/                    # directory of CTD cal-cast NetCDF files
-  cal_stops: data/aux/cal_stops.csv     # cal-stop windows: source,cast,stop_start,stop_end,ctd_file[,ref_temp]
+  cal_stops: data/aux/cal_stops.csv     # cal-stop windows: source,cast,stop_start,stop_end,ctd_file[,ref_temp]; build with propose_cal_stops + save_cal_stops
   # --- needed for: fit_drift, make_l2 ---
   aux: data/aux/                        # output directory for drift NetCDFs
 

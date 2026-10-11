@@ -82,7 +82,7 @@ stage that consumes it.
 | Config block / key | Consumed by |
 | --- | --- |
 | `meta.{mooring_name, project}` · `path.{fig, sensors, mooring}` · `path.data.{raw, proc}` · `start_time` · `end_time` | **all stages** (always required) |
-| `path.ctd` · `path.cal_stops` · `calibration.cal_casts_{pre,post}` · `calibration.cal_ignore_sns_{pre,post}` | `compute_ctd_offsets` |
+| `path.ctd` · `path.cal_stops` · `calibration.cal_casts_{pre,post}` · `calibration.cal_ignore_sns_{pre,post}` | `compute_ctd_offsets`, and `propose_cal_stops` / `save_cal_stops`, which build the `path.cal_stops` table |
 | `calibration.{method, offsets_pre, offsets_post}` | `cut_and_cal` (offsets are the *output* of `compute_ctd_offsets`) |
 | `path.data.grid` · `gridding.{dt, max_gap, chunk}` | `grid_l1`, `grid_l2` |
 | `segments.<name>.{select, drift, gridding, calibration}` | `cut_and_cal`, `grid_l1`, `fit_drift`, `make_l2`, `grid_l2` |
@@ -106,7 +106,7 @@ Each thermistor's internal clock is anchored to UTC during the raw → L0 conver
 
 # CTD rosette calibration
 
-Each sensor is calibrated against co-located CTD rosette casts at deployment and recovery. Pre- and post-deployment offset arrays (one offset per serial number, computed externally and stored as NetCDF) are consumed by `thermochain.io.rbr_cut_and_cal_interp` during the L0 → L1 step. When both endpoints are available, `thermochain.io.apply_interpolated_ctd_offset` applies a **linear-in-time interpolation** between them; the interpolation factor is clamped to `[0, 1]` so samples outside the cal bracket receive the corresponding endpoint offset. When only one endpoint is available, the function falls back to a scalar offset via `rbr_apply_ctd_offset`. A `cal_method` attribute is written to each L1 file recording which path was taken (`linear_interp`, `scalar`, or `none`).
+Each sensor is calibrated against co-located CTD rosette casts at deployment and recovery. Pre- and post-deployment offset arrays (one offset per serial number, computed externally and stored as NetCDF) are consumed by `thermochain.io.rbr_cut_and_cal_interp` during the L0 → L1 step. When both endpoints are available, `thermochain.io.apply_interpolated_ctd_offset` applies a **linear-in-time interpolation** between them; the interpolation factor is clamped to `[0, 1]` so samples outside the cal bracket receive the corresponding endpoint offset. When only one endpoint is available, the function falls back to a scalar offset via `rbr_apply_ctd_offset`. A `cal_method` attribute is written to each L1 file recording which path was taken (`linear_interp`, `scalar`, or `none`). The stop window used for each cast comes from the cal-stops table (`path.cal_stops`). `thermochain.pipeline.Mooring.propose_cal_stops` lists candidate windows for a cast from the CTD pressure record and the thermistor data and plots them, the user selects one per cast and adjusts it where needed, and `thermochain.pipeline.Mooring.save_cal_stops` writes it to the table.
 
 The same routine also handles end-of-record truncation: the L1 cut window is shortened on the fly by `rbr_find_last_time_stamp` (sensor stopped early), `rbr_find_first_long_gap` (deployment-killing data gap), or an optional per-sensor `end_manually` override supplied through the config.
 

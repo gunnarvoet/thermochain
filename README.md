@@ -94,6 +94,24 @@ names as given, and store any datetime columns as plain text in
 `yyyy-mm-dd hh:mm:ss` format to ease parsing. The sensor sheet may span several
 moorings but must hold only one row per serial number.
 
+### Calibration stops
+
+`compute_ctd_offsets` reads one stop window per calibration cast from the table at
+`path.cal_stops`. Choosing the windows is a manual step. `propose_cal_stops` lists candidates
+for a cast and draws them for review, and `save_cal_stops` writes the chosen one:
+
+```python
+cand = m.propose_cal_stops("pre", cast=4, ctd_file="cruise1/cast_004.nc")
+cand                                                 # one row per candidate, numbered as in the figures
+cand.loc[2, "stop_start"] = "2024-11-12 15:32:00"    # adjust by hand where needed
+m.save_cal_stops(cand.loc[[2]])                      # one stop per cast
+```
+
+Candidates are periods of steady CTD pressure (`detect_cal_stops`) whose start is moved forward
+until the difference between CTD and thermistors has settled (`refine_cal_stop`). The detection
+thresholds were set on deep-ocean casts from one cruise. Check every candidate in the
+temperature figure, in particular stops in strong stratification or with ship heave.
+
 ## Configuration
 
 Each mooring is described by one YAML config file. Start from the annotated,

@@ -1,5 +1,20 @@
 # History
 
+## Unreleased
+
+### New Features
+-   `Mooring.propose_cal_stops` lists candidate calibration stops for a CTD
+    cast and plots them for review. `Mooring.save_cal_stops` writes the chosen
+    stop to the table that `compute_ctd_offsets` reads. `refine_cal_stop`
+    moves the start of a stop forward until the difference between CTD and
+    thermistors has settled, and `thermochain.io.plot_cal_stop_candidates`
+    draws the candidates on the cast's pressure record.
+
+### Bug fixes
+-   `plot_multiple_cal_stop` raised a `TypeError` for a single stop. It now
+    returns a 2-D axes array for any number of stops.
+
+
 ## 2026.10.1
 
 ### Breaking changes
