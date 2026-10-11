@@ -986,6 +986,153 @@ def test_cal_cast_stack_selects_assigned_sensors(ctd_cal_mooring):
             m._cal_cast_stack("mid", 1, ctd)
 
 
+def test_propose_save_compute_roundtrip(ctd_cal_mooring):
+    """A saved proposal reproduces the offsets of the fixture's own table."""
+    m = Mooring(ctd_cal_mooring)
+    m.compute_ctd_offsets(sources=["pre"])
+    with xr.open_dataarray(m._offsets_out_path("pre")) as da:
+        ref = da.load()
+
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    assert cand.index.name == "candidate"
+    assert cand.index.tolist() == [1]
+    assert list(cand.columns) == [
+        "source", "cast", "stop_start", "stop_end", "ctd_file",
+        "ref_temp", "mean_p", "duration_s", "trim_s",
+    ]
+    # plateau detected from 00:06:53, first 2 s thermistor sample at 00:06:54,
+    # then one 30 s window (28 s at 2 s sampling)
+    assert cand.loc[1, "trim_s"] == 29.0
+    assert cand.loc[1, "mean_p"] == pytest.approx(1000.0, abs=1.0)
+    assert cand.loc[1, "ref_temp"] == pytest.approx(4.0, abs=1e-6)
+
+    m.save_cal_stops(cand.loc[[1]])
+    saved = m._load_cal_stops()
+    assert len(saved) == 3                          # pre 1 replaced, pre 4 and post 2 kept
+    assert sorted(zip(saved["source"], saved["cast"])) == [("post", 2), ("pre", 1), ("pre", 4)]
+
+    m.compute_ctd_offsets(sources=["pre"], overwrite=True)
+    with xr.open_dataarray(m._offsets_out_path("pre")) as da:
+        np.testing.assert_allclose(da.values, ref.values, atol=1e-9)
+
+
+def test_propose_cal_stops_without_refinement(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    cand = m.propose_cal_stops(
+        "pre", 1, "cruise1/cruise1_cast_001.nc", refine=False, plot=False
+    )
+    assert cand.loc[1, "trim_s"] == 0.0
+
+
+def test_propose_cal_stops_no_pool_sensors_is_pressure_only(ctd_cal_mooring):
+    """Review Focus 2: nobody assigned to the cast yet."""
+    m = Mooring(ctd_cal_mooring)
+    cand = m.propose_cal_stops("pre", 99, "cruise1/cruise1_cast_001.nc", plot=False)
+    assert len(cand) == 1
+    assert cand.loc[1, "trim_s"] == 0.0
+    assert cand.loc[1, "cast"] == 99
+
+
+def test_propose_cal_stops_never_stationary_cast(ctd_cal_mooring):
+    """Review Focus 1: empty proposal, no figure, no exception."""
+    m = Mooring(ctd_cal_mooring)
+    times = np.arange(
+        np.datetime64("2024-11-08T00:00:00"),
+        np.datetime64("2024-11-08T00:05:00"),
+        np.timedelta64(1, "s"),
+    )
+    p = np.linspace(0.0, 4000.0, times.size)
+    xr.Dataset(
+        {"p": ("time", p), "t1": ("time", p * 0), "t2": ("time", p * 0)},
+        coords={"time": times},
+    ).to_netcdf(m._ctd_dir() / "cruise1/moving.nc")
+    before = plt.get_fignums()
+    cand = m.propose_cal_stops("pre", 1, "cruise1/moving.nc")
+    assert len(cand) == 0
+    assert "stop_start" in cand.columns
+    assert plt.get_fignums() == before
+
+
+def test_propose_cal_stops_draws_two_figures(ctd_cal_mooring):
+    """Review Focus 3: a single candidate renders overview and zoom figures."""
+    m = Mooring(ctd_cal_mooring)
+    before = len(plt.get_fignums())
+    m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc")
+    assert len(plt.get_fignums()) == before + 2
+    plt.close("all")
+
+
+def test_propose_cal_stops_rejects_unknown_source(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    with pytest.raises(ValueError, match="source"):
+        m.propose_cal_stops("mid", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+
+
+def test_save_cal_stops_accepts_hand_edited_string_times(ctd_cal_mooring):
+    """Review Focus 4."""
+    m = Mooring(ctd_cal_mooring)
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    cand.loc[1, "stop_start"] = "2024-11-08 00:08:00"
+    m.save_cal_stops(cand)
+    saved = m._load_cal_stops()
+    row = saved[(saved["source"] == "pre") & (saved["cast"] == 1)].iloc[0]
+    assert np.datetime64(row["stop_start"]) == np.datetime64("2024-11-08T00:08:00")
+    summary = m.compute_ctd_offsets(sources=["pre"])
+    assert summary["pre"]["written"] == 3
+
+
+def test_save_cal_stops_creates_missing_file(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    (Path(m.cfg.path.root) / m.cfg.path.cal_stops).unlink()
+    path = m.save_cal_stops(cand)
+    assert path.exists()
+    assert len(m._load_cal_stops()) == 1
+
+
+def test_save_cal_stops_rejects_two_stops_for_one_cast(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    with pytest.raises(ValueError, match="one stop"):
+        m.save_cal_stops(pd.concat([cand, cand]))
+
+
+def test_save_cal_stops_accepts_a_single_row_series(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    m.save_cal_stops(cand.loc[1])
+    assert len(m._load_cal_stops()) == 3
+
+
+def test_save_cal_stops_keeps_extra_table_columns(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    csv = Path(m.cfg.path.root) / m.cfg.path.cal_stops
+    table = pd.read_csv(csv)
+    table["note"] = ["a", "b", "c"]
+    table.to_csv(csv, index=False)
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    m.save_cal_stops(cand.loc[[1]])
+    saved = pd.read_csv(csv)
+    assert sorted(saved["note"].dropna()) == ["b", "c"]     # pre 1 replaced
+
+
+def test_propose_cal_stops_checks_source_before_opening_the_cast(ctd_cal_mooring):
+    m = Mooring(ctd_cal_mooring)
+    with pytest.raises(ValueError, match="source"):
+        m.propose_cal_stops("mid", 1, "no_such_cast.nc", plot=False)
+
+
+def test_save_cal_stops_missing_column_leaves_file_untouched(ctd_cal_mooring):
+    """Review Focus 5."""
+    m = Mooring(ctd_cal_mooring)
+    csv = Path(m.cfg.path.root) / m.cfg.path.cal_stops
+    before = csv.read_text()
+    cand = m.propose_cal_stops("pre", 1, "cruise1/cruise1_cast_001.nc", plot=False)
+    with pytest.raises(ValueError, match="ctd_file"):
+        m.save_cal_stops(cand.drop(columns=["ctd_file"]))
+    assert csv.read_text() == before
+
+
 from thermochain.pipeline import STAGE_ORDER  # noqa: E402
 from thermochain.io import ProcessThermistorMooring  # noqa: E402
 

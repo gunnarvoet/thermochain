@@ -110,6 +110,8 @@ from .io import (  # noqa: F401
     evaluate_drift_model,
     grid_thermistors,
     logger,
+    plot_cal_stop_candidates,
+    plot_multiple_cal_stop,
     rbr_ctd_cal_find_offset,
     rbr_cut_and_cal,
     rbr_cut_and_cal_interp,
@@ -497,6 +499,8 @@ def correct_drift(sensor, sn, drift):
 _CAL_STOP_COLUMNS = ["stop_start", "stop_end", "mean_p", "mean_t", "duration_s"]
 _CAL_STOPS_REQUIRED_COLS = ["source", "cast", "stop_start", "stop_end", "ctd_file"]
 _CAL_ASSIGN_COL = {"pre": "pre_ctd_cal_cast", "post": "post_ctd_cal_cast"}
+_CAL_STOPS_CSV_COLS = _CAL_STOPS_REQUIRED_COLS + ["ref_temp"]
+_CAL_STOP_PROPOSAL_COLS = _CAL_STOPS_CSV_COLS + ["mean_p", "duration_s", "trim_s"]
 
 
 def detect_cal_stops(
@@ -970,6 +974,15 @@ class Mooring(ProcessThermistorMooring):
             d = Path(self.cfg.path.root) / d
         return d
 
+    def _cal_stops_path(self):
+        """Resolved path of the cal-stops table (``path.cal_stops``)."""
+        if "cal_stops" not in self.cfg.path:
+            raise KeyError("path.cal_stops not set in config")
+        p = Path(self.cfg.path.cal_stops)
+        if not p.is_absolute():
+            p = Path(self.cfg.path.root) / p
+        return p
+
     def _load_cal_stops(self):
         """Read the declarative per-cast cal-stop windows (``path.cal_stops``).
 
@@ -977,11 +990,7 @@ class Mooring(ProcessThermistorMooring):
         ``stop_end`` (ISO datetimes), ``ctd_file`` (relative to
         :meth:`_ctd_dir`), and advisory ``ref_temp``.
         """
-        if "cal_stops" not in self.cfg.path:
-            raise KeyError("path.cal_stops not set in config")
-        p = Path(self.cfg.path.cal_stops)
-        if not p.is_absolute():
-            p = Path(self.cfg.path.root) / p
+        p = self._cal_stops_path()
         df = pd.read_csv(p)
         missing = [c for c in _CAL_STOPS_REQUIRED_COLS if c not in df.columns]
         if missing:
@@ -1075,6 +1084,150 @@ class Mooring(ProcessThermistorMooring):
             ci.close()
         c["sn"] = (("n"), kept)
         return c
+
+    def propose_cal_stops(
+        self, source, cast, ctd_file, *, refine=True, plot=True,
+        detect_kwargs=None, refine_kwargs=None,
+    ):
+        """Propose candidate cal stops for one CTD cast.
+
+        Detects pressure plateaus with :func:`detect_cal_stops`, trims the
+        start of each with :func:`refine_cal_stop` using the sensors assigned
+        to the cast, and draws two figures for review: the pressure record
+        with the candidates shaded (`thermochain.io.plot_cal_stop_candidates`)
+        and thermistor and CTD temperature at each candidate
+        (`thermochain.io.plot_multiple_cal_stop`).
+
+        The candidates are a starting point. Pick one per cast, adjust
+        ``stop_start`` / ``stop_end`` in the returned table where the figures
+        call for it, and pass the chosen row to :meth:`save_cal_stops`. The
+        method needs ``path.ctd`` and ``calibration.cal_casts_{source}`` and
+        does not read or write the cal-stops table.
+
+        Parameters
+        ----------
+        source : str
+            ``"pre"`` or ``"post"``.
+        cast : int
+            Cast number as used in the sensor-sheet cast-assignment column.
+        ctd_file : str
+            Cast NetCDF file relative to ``path.ctd``, with time-indexed
+            ``p``, ``t1`` and ``t2``.
+        refine : bool, optional
+            Trim stop starts with :func:`refine_cal_stop`. Skipped with a
+            warning when no assigned sensor has pool data. Default ``True``.
+        plot : bool, optional
+            Draw the review figures. Default ``True``.
+        detect_kwargs, refine_kwargs : dict, optional
+            Keyword overrides for :func:`detect_cal_stops` and
+            :func:`refine_cal_stop`.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per candidate, indexed by ``candidate`` starting at 1
+            (the number shown in the figures). Columns ``source``, ``cast``,
+            ``stop_start``, ``stop_end``, ``ctd_file`` and ``ref_temp`` (mean
+            CTD ``t1`` over the window) are those of the cal-stops table.
+            ``mean_p`` (dbar), ``duration_s`` and ``trim_s`` (seconds removed
+            from the start by the refinement) are for review only.
+        """
+        cast = int(cast)
+        if source not in _CAL_ASSIGN_COL:
+            raise ValueError(f"source {source!r} not supported; expected 'pre' or 'post'")
+        with xr.open_dataset(self._ctd_dir() / str(ctd_file)) as ctd:
+            c = self._cal_cast_stack(source, cast, ctd)
+            if c is None and refine:
+                logger.warning(
+                    f"{source} cast {cast}: no sensors in pool, candidates are pressure-only"
+                )
+            detected = detect_cal_stops(ctd, **(detect_kwargs or {}))
+            rows, windows = [], []
+            for r in detected.itertuples():
+                sl = slice(np.datetime64(r.stop_start), np.datetime64(r.stop_end))
+                if refine and c is not None:
+                    sl = refine_cal_stop(sl, c, ctd, **(refine_kwargs or {}))
+                start, end = pd.Timestamp(sl.start), pd.Timestamp(sl.stop)
+                windows.append(sl)
+                rows.append({
+                    "source": source,
+                    "cast": cast,
+                    "stop_start": start,
+                    "stop_end": end,
+                    "ctd_file": str(ctd_file),
+                    "ref_temp": float(ctd.t1.sel(time=sl).mean()),
+                    "mean_p": float(ctd.p.sel(time=sl).mean()),
+                    "duration_s": (end - start).total_seconds(),
+                    "trim_s": (start - pd.Timestamp(r.stop_start)).total_seconds(),
+                })
+            out = pd.DataFrame(rows, columns=_CAL_STOP_PROPOSAL_COLS)
+            out.index = pd.RangeIndex(1, len(out) + 1, name="candidate")
+            if plot and len(out):
+                plot_cal_stop_candidates(ctd, out)
+                if c is not None:
+                    plot_multiple_cal_stop(windows, c, ctd)
+        return out
+
+    def save_cal_stops(self, stops):
+        """Write chosen cal stops to the cal-stops table (``path.cal_stops``).
+
+        Rows already in the table for the same ``(source, cast)`` are
+        replaced and all other rows are kept. The file is created if absent.
+        :meth:`compute_ctd_offsets` uses one stop per cast, so ``stops`` may
+        hold at most one row per ``(source, cast)``.
+
+        Parameters
+        ----------
+        stops : pd.DataFrame
+            Rows with columns ``source``, ``cast``, ``stop_start``,
+            ``stop_end``, ``ctd_file`` and optionally ``ref_temp``, for
+            example a selection from :meth:`propose_cal_stops`. Times may be
+            timestamps or parseable strings. Other columns of ``stops`` are
+            ignored. A single row may be passed as a Series.
+
+        Notes
+        -----
+        Columns of an existing table beyond the six above are kept. Replaced
+        rows move to the end of the table.
+
+        Returns
+        -------
+        pathlib.Path
+            The table that was written.
+        """
+        path = self._cal_stops_path()
+        if isinstance(stops, pd.Series):
+            stops = stops.to_frame().T
+        missing = [col for col in _CAL_STOPS_REQUIRED_COLS if col not in stops.columns]
+        if missing:
+            raise ValueError(f"stops missing required column(s): {missing}")
+        if stops.duplicated(["source", "cast"]).any():
+            raise ValueError(
+                "save_cal_stops takes one stop per (source, cast); select a single candidate"
+            )
+        new = []
+        for _, r in stops.iterrows():
+            new.append({
+                "source": str(r["source"]),
+                "cast": int(r["cast"]),
+                "stop_start": pd.Timestamp(r["stop_start"]).isoformat(),
+                "stop_end": pd.Timestamp(r["stop_end"]).isoformat(),
+                "ctd_file": str(r["ctd_file"]),
+                "ref_temp": r["ref_temp"] if "ref_temp" in stops.columns else np.nan,
+            })
+        keys = {(r["source"], r["cast"]) for r in new}
+        cols = list(_CAL_STOPS_CSV_COLS)
+        old = []
+        if path.exists():
+            table = pd.read_csv(path)
+            cols += [col for col in table.columns if col not in cols]
+            old = [
+                rec for rec in table.to_dict("records")
+                if (str(rec["source"]), int(rec["cast"])) not in keys
+            ]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(old + new, columns=cols).to_csv(path, index=False)
+        return path
 
     def compute_ctd_offsets(self, sources=None, overwrite=False):
         """Compute per-sensor CTD-cal offsets and write the offsets NetCDF(s).
