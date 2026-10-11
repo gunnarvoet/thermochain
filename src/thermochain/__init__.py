@@ -204,7 +204,7 @@ throughout as **CvHG16**:
 
 __author__ = """Gunnar Voet"""
 __email__ = "gvoet@ucsd.edu"
-__version__ = "2026.10.1"
+__version__ = "2026.10.2"
 
 __all__ = ["io", "plot", "pipeline", "Mooring"]
 from . import io, pipeline, plot

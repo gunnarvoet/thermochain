@@ -1,6 +1,6 @@
 # History
 
-## Unreleased
+## 2026.10.2
 
 ### New Features
 -   `Mooring.propose_cal_stops` lists candidate calibration stops for a CTD
