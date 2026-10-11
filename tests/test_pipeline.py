@@ -803,6 +803,36 @@ def test_refine_cal_stop_returns_input_for_tiny_segment():
     assert refine_cal_stop(tiny, c, ctd) == tiny
 
 
+import matplotlib.pyplot as plt  # noqa: E402
+
+from thermochain.io import plot_cal_stop_candidates, plot_multiple_cal_stop  # noqa: E402
+
+
+def test_plot_multiple_cal_stop_single_stop():
+    ctd = _synthetic_cast()
+    stop = _first_stop(ctd)
+    c = _synthetic_stack(ctd, stop.start)
+    fig, ax = plot_multiple_cal_stop([stop], c, ctd)
+    assert ax.shape == (1, 2)
+    plt.close(fig)
+
+
+def test_plot_cal_stop_candidates_shades_each_stop():
+    ctd = _synthetic_cast()
+    stops = detect_cal_stops(ctd)
+    fig, ax = plot_cal_stop_candidates(ctd, stops)
+    assert len(ax.patches) == len(stops) == 1
+    assert ax.yaxis_inverted()
+    plt.close(fig)
+
+
+def test_plot_cal_stop_candidates_empty_table():
+    ctd = _synthetic_cast()
+    fig, ax = plot_cal_stop_candidates(ctd, detect_cal_stops(ctd, min_duration="600s"))
+    assert len(ax.patches) == 0
+    plt.close(fig)
+
+
 from thermochain.io import rbr_ctd_cal_find_offset  # noqa: E402
 
 

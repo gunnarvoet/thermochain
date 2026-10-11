@@ -748,6 +748,7 @@ def plot_multiple_cal_stop(ts, rbr, ctd, dt=2):
         ncols=2,
         figsize=(10, 3 * n),
         constrained_layout=True,
+        squeeze=False,
     )
     leg = True
     ii = 1
@@ -767,6 +768,42 @@ def plot_multiple_cal_stop(ts, rbr, ctd, dt=2):
         )
         leg = False
         ii += 1
+    return fig, ax
+
+
+def plot_cal_stop_candidates(ctd, stops):
+    """Plot a cast's pressure record with candidate cal stops shaded.
+
+    Parameters
+    ----------
+    ctd : xr.Dataset
+        Cast dataset with a time-indexed ``p`` (dbar).
+    stops : pd.DataFrame
+        Candidate stops with columns ``stop_start``, ``stop_end`` and
+        ``mean_p``, as returned by `thermochain.pipeline.detect_cal_stops` or
+        `thermochain.pipeline.Mooring.propose_cal_stops`. The index values
+        label the stops.
+
+    Returns
+    -------
+    fig, ax
+    """
+    fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
+    ctd.p.plot(ax=ax, color="0.2", linewidth=0.7)
+    for label, r in stops.iterrows():
+        t0, t1 = pd.Timestamp(r["stop_start"]), pd.Timestamp(r["stop_end"])
+        ax.axvspan(t0, t1, color="C1", alpha=0.25)
+        ax.annotate(
+            f"#{label}\n{r['mean_p']:.0f} dbar",
+            xy=(t0 + (t1 - t0) / 2, r["mean_p"]),
+            ha="center",
+            va="center",
+            fontsize=8,
+        )
+    ax.invert_yaxis()
+    ax.set(xlabel="", ylabel="pressure [dbar]", title=f"{len(stops)} candidate stop(s)")
+    tcplot.concise_date(ax)
+    tcplot.axstyle(ax, fontsize=9)
     return fig, ax
 
 
