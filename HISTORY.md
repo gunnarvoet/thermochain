@@ -1,5 +1,18 @@
 # History
 
+## Unreleased
+
+### New Features
+-   `calc_eps_thorpe_scale` accepts `N2_method`, `alpha` (Ozmidov-to-Thorpe
+    scale ratio), `dnoise` and `min_points` (smallest number of sensors per
+    overturn) and passes the first three to `mixsea`. With
+    `return_diagnostics=True` it also returns the patch size, the overturn
+    stratification, the number of sensors per overturn and a flag for
+    overturns that include the first or last reporting sensor. The defaults
+    reproduce the previous output. The profile loop runs over numpy columns
+    and takes about a fifth of the time.
+
+
 ## 2026.10.2
 
 ### New Features

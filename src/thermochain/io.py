@@ -38,6 +38,7 @@ import xarray as xr
 import pandas as pd
 import rbrmoored
 import sbemoored
+import gsw
 import mixsea as mx
 
 from . import plot as tcplot
@@ -3396,53 +3397,146 @@ def lin_or_exp(x, xlin, xexp, return_type=False):
             return xlin_orig
 
 
-def calc_eps_thorpe_scale(t, lon, lat, S0=35.13):
+def _overturn_point_counts(dens):
+    """Number of points in the overturn each sample belongs to, 0 outside.
+
+    Runs `mixsea`'s patch finder on the density `mixsea` sorted, so the
+    patches are the ones `eps_overturn` used. Two overturns that abut are
+    counted apart. Samples without a density (dropped by `nan_eps_overturn`,
+    or a profile without any overturn) get 0.
+    """
+    n = np.zeros(dens.size, dtype=int)
+    ok = np.isfinite(dens)
+    if ok.sum() < 2:
+        return n
+    _, patches = mx.overturn.find_overturns(dens[ok])
+    counts = np.zeros(int(ok.sum()), dtype=int)
+    for i0, i1 in patches:
+        counts[i0 : i1 + 1] = i1 - i0 + 1
+    n[ok] = counts
+    return n
+
+
+def calc_eps_thorpe_scale(
+    t,
+    lon,
+    lat,
+    S0=35.13,
+    N2_method="teos",
+    alpha=0.95,
+    dnoise=5e-4,
+    min_points=2,
+    return_diagnostics=False,
+):
     """Calculate turbulent dissipation based on the Thorpe scales.
+
+    Each profile along `time` is sorted with `mixsea.overturn.nan_eps_overturn`
+    using a constant practical salinity. A profile on which `mixsea` raises
+    (for example one that is unstable from top to bottom) returns NaN
+    dissipation and a Thorpe scale of -1.
 
     Parameters
     ----------
     t : xr.DataArray
-        In-situ temperature calculated from thermistor dataset.
+        In-situ temperature on `depth` and `time`, depth increasing.
+    lon, lat : float
+        Position.
+    S0 : float, optional
+        Constant practical salinity. Default 35.13.
+    N2_method : {"teos", "teosp1", "endpt", "bulk"}, optional
+        How `mixsea` computes the stratification of an overturn. Default
+        "teos".
+    alpha : float, optional
+        Ozmidov-to-Thorpe scale ratio. Default 0.95.
+    dnoise : float, optional
+        Density noise threshold [kg/m^3]. Default 5e-4.
+    min_points : int, optional
+        Smallest number of sensors an overturn must span. Overturns with
+        fewer get NaN dissipation and keep their Thorpe scale. The default 2
+        is the smallest overturn there is and removes nothing.
+    return_diagnostics : bool, optional
+        Also return a Dataset with the patch size `Lp` [m], the overturn
+        stratification `N2` [s^-2], the number of sensors `n_points` in the
+        overturn of each sample (0 outside overturns) and `ends_flag`, True
+        where the overturn includes the first or last sensor that reports in
+        that profile.
 
     Returns
     -------
     eps : xr.DataArray
-        Thorpe scale-based turbulent dissipation [W/kg].
+        Thorpe scale-based turbulent dissipation [W/kg] on (depth, time).
     Lt : xr.DataArray
         Thorpe scale [m].
+    diag : xr.Dataset
+        Only with `return_diagnostics=True`.
+
+    Notes
+    -----
+    Counting the sensors of an overturn needs the chain inside one of the
+    1000 dbar bins `mixsea` assigns a reference pressure to. `min_points`
+    above 2 and `return_diagnostics` raise `ValueError` otherwise.
     """
-
-    def thorpe_scale_calcs(t, lon, lat, S):
-        """Run a single-profile Thorpe-scale overturn analysis via `mixsea`."""
-        N2_method = "teos"
-        eps_t, N2_t, diag = mx.overturn.nan_eps_overturn(
-            t.depth.data,
-            t.data,
-            SP=S,
-            lon=lon,
-            lat=lat,
-            N2_method=N2_method,
-            return_diagnostics=True,
-        )
-        return eps_t, diag["Lt"]
-
-    results = []
-    for g, ti in tqdm.tqdm(t.groupby("time")):
-        ti = ti.squeeze()
+    tt = t.transpose("depth", "time")
+    depth = np.asarray(tt.depth.values, dtype=float)
+    need_counts = return_diagnostics or min_points > 2
+    if need_counts:
+        p = gsw.p_from_z(-depth, lat)
+        if np.floor(p.min() / 1000) != np.ceil(p.max() / 1000) - 1:
+            raise ValueError(
+                "counting the sensors of an overturn needs the chain inside one "
+                "1000 dbar bin of mixsea's reference pressures"
+            )
+    tv = tt.values
+    n_z, n_t = tv.shape
+    eps = np.full((n_z, n_t), np.nan)
+    Lt = np.full((n_z, n_t), -1.0)
+    Lp = np.full((n_z, n_t), np.nan)
+    N2 = np.full((n_z, n_t), np.nan)
+    n_points = np.zeros((n_z, n_t), dtype=np.int16)
+    ends = np.zeros((n_z, n_t), dtype=bool)
+    for i in tqdm.trange(n_t):
         try:
-            eps, Lt = thorpe_scale_calcs(ti, lon, lat, S0)
+            e, n2, diag = mx.overturn.nan_eps_overturn(
+                depth,
+                tv[:, i],
+                SP=S0,
+                lon=lon,
+                lat=lat,
+                N2_method=N2_method,
+                alpha=alpha,
+                dnoise=dnoise,
+                return_diagnostics=True,
+            )
         except Exception:
-            eps = np.zeros_like(ti.data) * np.nan
-            Lt = np.ones_like(ti.data) * (-1)
-        results.append((eps, Lt))
+            continue
+        if need_counts:
+            npts = _overturn_point_counts(np.asarray(diag["dens"], dtype=float))
+            if min_points > 2:
+                small = npts < min_points
+                e = np.where(small, np.nan, e)
+                n2 = np.where(small, np.nan, n2)
+            n_points[:, i] = npts
+            # mixsea returns the flag as float with NaN where a sample was dropped
+            ends[:, i] = np.nan_to_num(np.asarray(diag["ends_flag"], dtype=float)).astype(bool)
+            Lp[:, i] = diag["Lp"]
+            N2[:, i] = n2
+        eps[:, i] = e
+        Lt[:, i] = diag["Lt"]
 
-    eps_results = np.array([result_i[0] for result_i in results])
-    Lt_results = np.array([result_i[1] for result_i in results])
-
-    eps_out = xr.DataArray(eps_results.T, coords=t.coords, dims=t.dims)
-
-    Lt_out = xr.DataArray(Lt_results.T, coords=t.coords, dims=t.dims)
-    return eps_out, Lt_out
+    eps_out = xr.DataArray(eps, coords=tt.coords, dims=tt.dims)
+    Lt_out = xr.DataArray(Lt, coords=tt.coords, dims=tt.dims)
+    if not return_diagnostics:
+        return eps_out, Lt_out
+    diag_out = xr.Dataset(
+        dict(
+            Lp=(tt.dims, Lp),
+            N2=(tt.dims, N2),
+            n_points=(tt.dims, n_points),
+            ends_flag=(tt.dims, ends),
+        ),
+        coords=tt.coords,
+    )
+    return eps_out, Lt_out, diag_out
 
 
 def _ignore_hidden_files(files):
