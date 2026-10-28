@@ -35,14 +35,23 @@ SVG_OUT = REPO / "src" / "thermochain" / "_static" / "pipeline_schematic.svg"
 
 
 def build_horizontal():
-    """Build the wide (landscape) pipeline schematic for the manuscript PDF."""
+    """Build the wide (landscape) pipeline schematic for the manuscript PDF.
+
+    The PDF is scaled to the manuscript text width (39 pc), so the labels are
+    wrapped narrow and each box is sized to its own content: the figure width,
+    and with it the printed font size, is set by the summed box widths.
+    """
     # --- local font/geometry constants (horizontal layout) -------------------
-    FS_SUB = 6.3
-    FS_CFG_S = 6.3
-    GH = 0.40            # horizontal gap between chain boxes
-    G_ABOVE = 0.34       # gap chain -> inputs/drift row (above)
-    G_BELOW = 0.32       # gap chain -> config band (below)
-    MARGIN = 0.15
+    FS_T = 9.5           # box heading (bold)
+    FS_S = 8.0           # box description
+    FS_IN = 8.5          # input-table label (bold)
+    FS_CFG_T_H, FS_CFG_S_H = 9.0, 8.0
+    PAD_XH = 0.09        # horizontal text padding inside a box
+    GH = 0.26            # horizontal gap between chain boxes
+    G_ABOVE = 0.30       # gap chain -> inputs/drift row (above)
+    G_BELOW = 0.26       # gap chain -> config band (below)
+    G_IN = 0.08          # gap between the two inputs feeding L1
+    MARGIN = 0.05
 
     plt.rcParams.update({
         "font.family": "sans-serif",
@@ -52,21 +61,22 @@ def build_horizontal():
 
     # content definitions (subtitles wrapped narrow to keep the row compact) --
     chain = [
-        ("raw", "Raw logger files", "RBR Solo · SBE56", C_RAW, E_RAW),
-        ("L0", "L0", "Clock calibration\n(per sensor)", *LEVELS["L0"]),
-        ("L1", "L1", "Cut to deployment\nwindow + in-situ\nCTD calibration",
+        ("raw", "Raw logger\nfiles", "RBR Solo\nSBE56", C_RAW, E_RAW),
+        ("L0", "L0", "Clock\ncalibration\n(per sensor)", *LEVELS["L0"]),
+        ("L1", "L1", "Cut to\ndeployment\nwindow + in-situ\nCTD calibration",
          *LEVELS["L1"]),
-        ("gL1", "Gridded L1", "Interpolate onto\ncommon depth–time\ngrid",
+        ("gL1", "Gridded L1", "Interpolate\nonto common\ndepth–time\ngrid",
          *LEVELS["gL1"]),
-        ("L2", "L2", "Subtract drift\n(per sensor)", *LEVELS["L2"]),
-        ("gL2", "Gridded L2", "Drift-corrected\ntemperature product",
+        ("L2", "L2", "Subtract\ndrift\n(per sensor)", *LEVELS["L2"]),
+        ("gL2", "Gridded L2", "Drift-corrected\ntemperature\nproduct",
          C_FINAL, E_FINAL),
     ]
-    inputs = [("Sensor sheet", "L0"), ("Cal-stops table", "L1"),
-              ("CTD cal casts", "L1")]
+    inputs = [("Sensor\nsheet", "L0"), ("Cal-stops\ntable", "L1"),
+              ("CTD cal\ncasts", "L1")]
     cfg_title = "Configuration (per mooring)"
     cfg_items = ("data paths  ·  sensor & mooring layout  ·  segments  ·  "
                  "gridding  ·  calibration  ·  drift parameters")
+    drift_title, drift_sub = "Drift fit", "CvHG16\ndense\nsegments"
 
     # ---- measurement pass --------------------------------------------------
     scratch = plt.figure()
@@ -74,35 +84,37 @@ def build_horizontal():
 
     chain_m = {}
     for key, title, sub, fc, ec in chain:
-        tw, th = _measure(scratch, sax, title, FS_TITLE, "bold")
-        sw, sh = _measure(scratch, sax, sub, FS_SUB)
-        chain_m[key] = (max(tw, sw), th, sh, title, sub, fc, ec)
-    Wc = max(m[0] for m in chain_m.values()) + 2 * PAD_X
+        tw, th = _measure(scratch, sax, title, FS_T, "bold")
+        sw, sh = _measure(scratch, sax, sub, FS_S)
+        chain_m[key] = (max(tw, sw) + 2 * PAD_XH, th, sh, title, sub, fc, ec)
     Hc = max(m[1] + GAP_TS + m[2] for m in chain_m.values()) + 2 * PAD_Y
 
     in_m = {}
     for label, _ in inputs:
-        in_m[label] = _measure(scratch, sax, label, FS_INPUT, "bold")
-    Wi = max(w for w, _ in in_m.values()) + 2 * PAD_X
+        in_m[label] = _measure(scratch, sax, label, FS_IN, "bold")
+    Wi = max(w for w, _ in in_m.values()) + 2 * PAD_XH
     Hi = max(h for _, h in in_m.values()) + 2 * PAD_Y
 
-    dtw, dth = _measure(scratch, sax, "Drift fit", FS_DRIFT_T, "bold")
-    dsw, dsh = _measure(scratch, sax, "CvHG16\ndense segments", FS_DRIFT_S)
-    Wd = max(dtw, dsw) + 2 * PAD_X
+    dtw, dth = _measure(scratch, sax, drift_title, FS_T, "bold")
+    dsw, dsh = _measure(scratch, sax, drift_sub, FS_S)
+    Wd = max(dtw, dsw) + 2 * PAD_XH
     Hd = dth + GAP_TS + dsh + 2 * PAD_Y
 
-    ctw, cth = _measure(scratch, sax, cfg_title, FS_CFG_T, "bold")
-    ciw, cih = _measure(scratch, sax, cfg_items, FS_CFG_S)
+    ctw, cth = _measure(scratch, sax, cfg_title, FS_CFG_T_H, "bold")
+    ciw, cih = _measure(scratch, sax, cfg_items, FS_CFG_S_H)
     Hband = cth + GAP_TS + cih + 2 * PAD_Y
     plt.close(scratch)
 
-    # ---- horizontal layout (chain centres) ---------------------------------
-    pitch = Wc + GH
-    x0 = MARGIN + Wc / 2
+    # ---- horizontal layout (chain centres, content-sized boxes) ------------
     keys = [k for k, *_ in chain]
-    xc = {k: x0 + i * pitch for i, k in enumerate(keys)}
+    wc = {k: chain_m[k][0] for k in keys}
+    xc = {}
+    x = MARGIN
+    for k in keys:
+        xc[k] = x + wc[k] / 2
+        x += wc[k] + GH
     chain_left = MARGIN
-    chain_right = xc[keys[-1]] + Wc / 2
+    chain_right = xc[keys[-1]] + wc[keys[-1]] / 2
     W = chain_right + MARGIN
 
     # ---- vertical layout ---------------------------------------------------
@@ -123,13 +135,14 @@ def build_horizontal():
     bot = y_chain - Hc / 2
 
     for key in keys:
-        cw_, th, sh, title, sub, fc, ec = chain_m[key]
+        w_, th, sh, title, sub, fc, ec = chain_m[key]
         lw = 1.6 if key == "gL2" else 1.1
-        draw_box(ax, xc[key], y_chain, Wc, Hc, title, sub, fc, ec, th, sh, lw=lw)
+        draw_box(ax, xc[key], y_chain, w_, Hc, title, sub, fc, ec, th, sh,
+                 title_fs=FS_T, sub_fs=FS_S, lw=lw)
 
     # main-chain arrows (left -> right)
     for a, b in zip(keys[:-1], keys[1:]):
-        arrow(ax, xc[a] + Wc / 2, y_chain, xc[b] - Wc / 2, y_chain)
+        arrow(ax, xc[a] + wc[a] / 2, y_chain, xc[b] - wc[b] / 2, y_chain)
 
     # --- configuration band (below; parameterizes every stage) --------------
     ax.add_patch(FancyBboxPatch(
@@ -139,32 +152,33 @@ def build_horizontal():
     ))
     bcx = (chain_left + chain_right) / 2
     ax.text(bcx, y_band + (GAP_TS + cih) / 2, cfg_title, ha="center",
-            va="center", fontsize=FS_CFG_T, fontweight="bold", color=TEXT,
+            va="center", fontsize=FS_CFG_T_H, fontweight="bold", color=TEXT,
             zorder=3)
     ax.text(bcx, y_band - (GAP_TS + cth) / 2, cfg_items, ha="center",
-            va="center", fontsize=FS_CFG_S, color=TEXT, zorder=3)
+            va="center", fontsize=FS_CFG_S_H, color=TEXT, zorder=3)
     for k in ["L0", "L1", "gL1", "L2", "gL2"]:
         arrow(ax, xc[k], y_band + Hband / 2, xc[k], bot, color=A_CFG, lw=0.9,
               alpha=0.85, mut=7)
 
     # --- data inputs (above, feeding the early stages) ----------------------
-    x_ss = xc["L0"]
-    x_cs = xc["L1"] - 0.46
-    x_ctd = xc["L1"] + 0.66
-    in_x = {"Sensor sheet": x_ss, "Cal-stops table": x_cs, "CTD cal casts": x_ctd}
-    in_aim = {"Sensor sheet": xc["L0"], "Cal-stops table": xc["L1"] - 0.10,
-              "CTD cal casts": xc["L1"] + 0.10}
+    # the two L1 inputs sit side by side, centred on L1 unless that would
+    # collide with the sensor sheet over L0
+    x_cs = max(xc["L1"] - (Wi + G_IN) / 2, xc["L0"] + Wi + G_IN)
+    in_x = {"Sensor\nsheet": xc["L0"], "Cal-stops\ntable": x_cs,
+            "CTD cal\ncasts": x_cs + Wi + G_IN}
+    in_aim = {"Sensor\nsheet": xc["L0"], "Cal-stops\ntable": xc["L1"] - 0.10,
+              "CTD cal\ncasts": xc["L1"] + 0.10}
     for label, _ in inputs:
         tw, th = in_m[label]
         draw_box(ax, in_x[label], y_above, Wi, Hi, label, "", C_INPUT, E_INPUT,
-                 th, 0.0, title_fs=FS_INPUT, dashed=True)
-        arrow(ax, in_aim[label], y_above - Hi / 2, in_aim[label], top,
+                 th, 0.0, title_fs=FS_IN, dashed=True)
+        arrow(ax, in_x[label], y_above - Hi / 2, in_aim[label], top,
               color=E_INPUT, lw=1.0, mut=8)
 
     # --- drift-fit branch (above, between gridded L1 and L2) ----------------
     dcx = (xc["gL1"] + xc["L2"]) / 2
-    draw_box(ax, dcx, y_above, Wd, Hd, "Drift fit", "CvHG16\ndense segments",
-             C_DRIFT, E_DRIFT, dth, dsh, title_fs=FS_DRIFT_T, sub_fs=FS_DRIFT_S)
+    draw_box(ax, dcx, y_above, Wd, Hd, drift_title, drift_sub,
+             C_DRIFT, E_DRIFT, dth, dsh, title_fs=FS_T, sub_fs=FS_S)
     arrow(ax, xc["gL1"], top, dcx - Wd / 2, y_above - Hd / 2 + 0.05,
           color=E_DRIFT, lw=1.2)
     arrow(ax, dcx + Wd / 2, y_above - Hd / 2 + 0.05, xc["L2"], top,

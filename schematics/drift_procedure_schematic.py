@@ -34,31 +34,43 @@ SVG_OUT = REPO / "src" / "thermochain" / "_static" / "drift_procedure_schematic.
 
 
 def build_horizontal():
-    """Wide drift schematic: per-window block left + two-row pass grid right."""
+    """Wide drift schematic: per-window block left + two-row pass grid right.
+
+    The PDF is scaled to the manuscript text width (39 pc), so the labels are
+    wrapped narrow to keep the five columns, and with them the figure width,
+    small relative to the font size.
+    """
     # compact labels (title, subtitle) for the tight wide layout
     LABELS = {
         "gL1": ("Gridded L1", "full record"),
-        "bg": ("Windowed\nbackground fit", "spline · per window"),
-        "off1": ("First-guess\noffsets", "residual from bg"),
+        "bg": ("Windowed\nbackground fit", "spline\nper window"),
+        "off1": ("First-guess\noffsets", "residual from\nbackground"),
         "sig": ("±3σ rejection", "drop time-series\noutliers"),
-        "sfc1": ("Shared component", "neighbour triplet"),
-        "off2": ("Second-guess\noffsets", "− shared comp."),
-        "interim": ("Interim drift fit", "per sensor"),
-        "two": ("Recompute\nshared component", "from detrended\noffsets"),
-        "clean": ("Cleaned offsets", "orig. − recomputed"),
-        "model": ("Final drift model", "lin/exp · R²"),
+        "sfc1": ("Shared\ncomponent", "neighbor triplet"),
+        "off2": ("Second-guess\noffsets", "− shared\ncomponent"),
+        "interim": ("Interim\ndrift fit", "per sensor"),
+        "two": ("Recompute\nshared\ncomponent", "from detrended\noffsets"),
+        "clean": ("Cleaned\noffsets", "original −\nrecomputed"),
+        "model": ("Final drift\nmodel", "lin/exp · R²"),
         "L2": ("Subtract → L2", "drift-corrected"),
     }
 
+    # fonts (pt)
+    FS_T, FS_S = 9.5, 8.0    # box title (bold) / subtitle
+    FS_LAB = 8.0             # phase-panel and pass labels
+    FS_LOOP = 8.0            # loop-back label
+
     # geometry (inches)
-    VPAD = 0.08
-    GH = 0.40            # horizontal gap between grid columns
-    GV = 0.52            # vertical gap between the two pass rows (room for loop-back)
-    MARGIN = 0.16
-    GAP_LR = 0.46        # gap between the per-window block and the grid
-    PANEL_PAD = 0.10
-    TOPLAB = 0.24
-    RLAB = 0.30          # right gutter for the rotated pass labels
+    VPAD = 0.07
+    PAD_XH = 0.09        # horizontal text padding inside a box
+    GH = 0.28            # horizontal gap between grid columns
+    GV = 0.42            # vertical gap between the two pass rows (room for loop-back)
+    MARGIN = 0.05
+    GAP_LR = 0.32        # gap between the per-window block and the grid
+    PANEL_PAD = 0.08
+    TOPLAB = 0.26        # room above the time-series panel for its label
+    PW_LABH = 0.32       # room inside the per-window panel for its label
+    RLAB = 0.22          # right gutter for the rotated pass labels
 
     plt.rcParams.update({
         "font.family": "sans-serif",
@@ -73,12 +85,12 @@ def build_horizontal():
     sax = scratch.add_subplot()
     meas = {}  # key -> (w, h, th, sh)
     for key, (title, sub) in LABELS.items():
-        tw, th = _measure(scratch, sax, title, 8.0, "bold")
-        sw, sh = _measure(scratch, sax, sub, 6.5)
+        tw, th = _measure(scratch, sax, title, FS_T, "bold")
+        sw, sh = _measure(scratch, sax, sub, FS_S)
         meas[key] = (max(tw, sw), th + GAP_TS + sh + 2 * VPAD, th, sh)
     plt.close(scratch)
 
-    Wc = max(m[0] for m in meas.values()) + 2 * PAD_X
+    Wc = max(m[0] for m in meas.values()) + 2 * PAD_XH
 
     # roles ------------------------------------------------------------------
     left_stack = ["gL1", "bg", "off1"]          # input + per-window, top->down
@@ -86,8 +98,8 @@ def build_horizontal():
     row2 = ["two", "clean", "model"]            # second pass (cols g1..g3)
 
     # ---- x layout ----------------------------------------------------------
-    left_cx = MARGIN + Wc / 2
-    grid_left = MARGIN + Wc + GAP_LR
+    left_cx = MARGIN + PANEL_PAD + Wc / 2
+    grid_left = left_cx + Wc / 2 + GAP_LR
     gx = [grid_left + Wc / 2 + j * (Wc + GH) for j in range(4)]
     grid_right = gx[-1] + Wc / 2
     W = grid_right + PANEL_PAD + RLAB + MARGIN
@@ -97,7 +109,8 @@ def build_horizontal():
     hB = max(meas[k][1] for k in row2)
     hL2 = meas["L2"][1]
     grid_h = hA + GV + hB + GV + hL2            # rows + L2 below final fit
-    left_h = sum(meas[k][1] for k in left_stack) + GV * (len(left_stack) - 1)
+    left_h = (sum(meas[k][1] for k in left_stack) + GV * (len(left_stack) - 1)
+              + PANEL_PAD + PW_LABH)
     block_h = max(grid_h, left_h)
     H = MARGIN + TOPLAB + block_h + MARGIN
 
@@ -136,14 +149,15 @@ def build_horizontal():
 
     # phase panels + labels
     pw_top = t_("bg") + PANEL_PAD
-    pw_bot = b_("off1") - PANEL_PAD
+    pw_bot = b_("off1") - PANEL_PAD - PW_LABH   # label sits under the boxes
     ax.add_patch(FancyBboxPatch(
         (left_cx - Wc / 2 - PANEL_PAD, pw_bot), Wc + 2 * PANEL_PAD,
         pw_top - pw_bot, boxstyle=f"round,pad=0,rounding_size={ROUND}",
         facecolor=C_PW, edgecolor=E_PW, linewidth=1.0, zorder=0,
     ))
-    ax.text(left_cx, pw_top + 0.09, PW_LABEL, ha="center", va="bottom",
-            fontsize=6.5, color=E_PW, zorder=3)
+    ax.text(left_cx, pw_bot + PW_LABH / 2 + 0.02, PW_LABEL.replace(" (", "\n("),
+            ha="center", va="center", fontsize=FS_LAB, color=E_PW, zorder=3,
+            linespacing=1.1)
 
     ts_left = gx[0] - Wc / 2 - PANEL_PAD
     ts_right = gx[-1] + Wc / 2 + PANEL_PAD
@@ -154,20 +168,21 @@ def build_horizontal():
         boxstyle=f"round,pad=0,rounding_size={ROUND}",
         facecolor=C_TS, edgecolor=E_TS, linewidth=1.0, zorder=0,
     ))
-    ax.text((ts_left + ts_right) / 2, ts_top + 0.09, TS_LABEL, ha="center",
-            va="bottom", fontsize=6.5, color=E_TS, zorder=3)
+    ax.text((ts_left + ts_right) / 2, ts_top + 0.06, TS_LABEL, ha="center",
+            va="bottom", fontsize=FS_LAB, color=E_TS, zorder=3)
     # pass labels in the right gutter, aligned with each grid row
-    ax.text(ts_right + 0.13, yA, PASS1_LABEL, rotation=90, ha="center",
-            va="center", fontsize=6.5, color=E_TS, zorder=3)
-    ax.text(ts_right + 0.13, yB, PASS2_LABEL, rotation=90, ha="center",
-            va="center", fontsize=6.5, color=E_TS, zorder=3)
+    ax.text(ts_right + RLAB / 2, yA, PASS1_LABEL, rotation=90, ha="center",
+            va="center", fontsize=FS_LAB, color=E_TS, zorder=3)
+    ax.text(ts_right + RLAB / 2, yB, PASS2_LABEL, rotation=90, ha="center",
+            va="center", fontsize=FS_LAB, color=E_TS, zorder=3)
 
     # boxes
     for key, (title, sub) in LABELS.items():
         _, h, th, sh = meas[key]
         fc, ec = colors[key]
         lw = 1.8 if key in ("two", "L2") else 1.1
-        draw_box(ax, xc[key], yc[key], Wc, h, title, sub, fc, ec, th, sh, lw=lw)
+        draw_box(ax, xc[key], yc[key], Wc, h, title, sub, fc, ec, th, sh,
+                 title_fs=FS_T, sub_fs=FS_S, lw=lw)
 
     # arrows: left stack (down) + hand-off into the grid
     for a, b in zip(left_stack[:-1], left_stack[1:]):
@@ -190,7 +205,7 @@ def build_horizontal():
         shrinkA=1, shrinkB=1, zorder=1,
     ))
     ax.text((xc["two"] + xc["interim"]) / 2, (yA + yB) / 2, LOOP_LABEL,
-            ha="center", va="center", fontsize=6.0, color=A_MAIN, zorder=3,
+            ha="center", va="center", fontsize=FS_LOOP, color=A_MAIN, zorder=3,
             bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none"))
 
     return fig
