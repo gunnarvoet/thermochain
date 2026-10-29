@@ -1,6 +1,6 @@
 # History
 
-## Unreleased
+## 2026.10.3
 
 ### New Features
 -   `calc_eps_thorpe_scale` accepts `N2_method`, `alpha` (Ozmidov-to-Thorpe
