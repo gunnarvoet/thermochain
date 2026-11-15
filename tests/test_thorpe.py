@@ -106,3 +106,21 @@ def test_point_counts_refuse_a_chain_across_two_reference_pressures():
                      coords=dict(depth=depth, time=[np.datetime64("2024-01-01")]))
     with pytest.raises(ValueError, match="1000 dbar"):
         calc_eps_thorpe_scale(t, LON, LAT, min_points=3)
+
+
+def test_pbinwidth_fits_a_chain_across_a_bin_edge():
+    """A chain across 3000 dbar raises at the default bin width and runs in
+    one bin with pbinwidth=700, giving the direct mixsea call with the same
+    bin width."""
+    depth = 2950.0 + 3.0 * np.arange(20)  # 2988 to 3047 dbar at this latitude
+    T = _with_overturns() - 2.4
+    t = xr.DataArray(T[:, None], dims=("depth", "time"),
+                     coords=dict(depth=depth, time=np.array(["2024-01-01"], dtype="datetime64[s]")))
+    with pytest.raises(ValueError, match="pbinwidth"):
+        calc_eps_thorpe_scale(t, LON, LAT, min_points=3)
+    eps, Lt = calc_eps_thorpe_scale(t, LON, LAT, min_points=3, pbinwidth=700)
+    e0, _, d0 = mx.overturn.nan_eps_overturn(
+        depth, T, SP=35.13, lon=LON, lat=LAT, N2_method="teos", pbinwidth=700, return_diagnostics=True)
+    np.testing.assert_array_equal(Lt.values[:, 0], d0["Lt"])
+    np.testing.assert_array_equal(eps.values[10:14, 0], e0[10:14])
+    assert np.isnan(eps.values[[4, 5], 0]).all()

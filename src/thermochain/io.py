@@ -3427,6 +3427,7 @@ def calc_eps_thorpe_scale(
     dnoise=5e-4,
     min_points=2,
     return_diagnostics=False,
+    pbinwidth=1000,
 ):
     """Calculate turbulent dissipation based on the Thorpe scales.
 
@@ -3454,6 +3455,12 @@ def calc_eps_thorpe_scale(
         Smallest number of sensors an overturn must span. Overturns with
         fewer get NaN dissipation and keep their Thorpe scale. The default 2
         is the smallest overturn there is and removes nothing.
+    pbinwidth : float, optional
+        Width [dbar] of the pressure bins `mixsea` assigns a reference
+        pressure to, the bin midpoint. Default 1000, the `mixsea` default.
+        Bins start at multiples of `pbinwidth`, so a chain that straddles a
+        multiple of 1000 dbar fits in one bin with a width that puts no bin
+        edge inside it (700 for 2988 to 3339 dbar).
     return_diagnostics : bool, optional
         Also return a Dataset with the patch size `Lp` [m], the overturn
         stratification `N2` [s^-2], the number of sensors `n_points` in the
@@ -3473,7 +3480,7 @@ def calc_eps_thorpe_scale(
     Notes
     -----
     Counting the sensors of an overturn needs the chain inside one of the
-    1000 dbar bins `mixsea` assigns a reference pressure to. `min_points`
+    `pbinwidth` bins `mixsea` assigns a reference pressure to. `min_points`
     above 2 and `return_diagnostics` raise `ValueError` otherwise.
     """
     tt = t.transpose("depth", "time")
@@ -3481,10 +3488,11 @@ def calc_eps_thorpe_scale(
     need_counts = return_diagnostics or min_points > 2
     if need_counts:
         p = gsw.p_from_z(-depth, lat)
-        if np.floor(p.min() / 1000) != np.ceil(p.max() / 1000) - 1:
+        if np.floor(p.min() / pbinwidth) != np.ceil(p.max() / pbinwidth) - 1:
             raise ValueError(
                 "counting the sensors of an overturn needs the chain inside one "
-                "1000 dbar bin of mixsea's reference pressures"
+                f"{pbinwidth:g} dbar bin of mixsea's reference pressures; "
+                "choose pbinwidth so that no bin edge falls inside the chain"
             )
     tv = tt.values
     n_z, n_t = tv.shape
@@ -3505,6 +3513,7 @@ def calc_eps_thorpe_scale(
                 N2_method=N2_method,
                 alpha=alpha,
                 dnoise=dnoise,
+                pbinwidth=pbinwidth,
                 return_diagnostics=True,
             )
         except Exception:
